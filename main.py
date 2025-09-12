@@ -11,15 +11,17 @@ from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QProgressBar, QL
     QPushButton, QHBoxLayout, QStyle, QListWidget, QListWidgetItem, QTextEdit, QStackedWidget, QFileDialog, QGridLayout, \
     QMenu, QInputDialog, QMainWindow, QTabWidget
 
-try:
-    import uvloop
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
-    pass
-
 
 def path_stand(src: str, loc: str) -> tuple[str, str]:
+    """
+    * 标准化目录形式，并把要传输的内容添加到loc末尾
+    * src = c:\\path\\to\\src\\ -> c:/path/to/src
+      loc = c:\\path\\to\\loc\\
+      loc = c:\\path\\to\\loc\\src
+    :param    src: 源文件(文件夹)地址
+    :param    loc: 目标文件(文件夹)地址
+    :return:  经过处理的 (src, loc)
+    """
     src: str = src.replace('\\', '/')
     loc: str = loc.replace('\\', '/')
     src: str = src.removesuffix('/')
@@ -29,6 +31,11 @@ def path_stand(src: str, loc: str) -> tuple[str, str]:
 
 
 class Edit(QWidget):
+    """
+    * 当用户点击SFTP窗口的文件时，打开这个窗口
+    * 提供可以编辑文件
+    """
+
     def __init__(self, src, text):
         super().__init__()
         self.setGeometry(0, 0, 500, 500)
@@ -43,7 +50,10 @@ class Edit(QWidget):
 
 
 class SFTPSession(QThread):
-    msg = pyqtSignal(QProgressBar, int)
+    """
+    * 传输SFTP数据
+    """
+    msg = pyqtSignal(QProgressBar, int)  # 更新进度条信号
 
     def __init__(self, host: str, port: int, username: str, password: str):
         super().__init__()
@@ -59,6 +69,10 @@ class SFTPSession(QThread):
         self.all_progress_list = []
 
     def run(self):
+        """
+        让asyncio的事件循环在主线程中运行
+        :return:
+        """
         self.loop.run_forever()
 
     def getcwd(self):
@@ -114,15 +128,15 @@ class SFTPSession(QThread):
         except OSError:
             try:
                 all_size = await self.sftp.getsize(src)
-                pbar.setValue(self.all_progress_list[pbar_idx] + all_size - last_size)
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx] + all_size - last_size)
             except asyncssh.SFTPError:
-                pbar.setValue(self.all_progress_list[pbar_idx])
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx])
         except asyncssh.SFTPError:
             try:
                 all_size = await self.sftp.getsize(src)
-                pbar.setValue(self.all_progress_list[pbar_idx] + all_size - last_size)
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx] + all_size - last_size)
             except asyncssh.SFTPError:
-                pbar.setValue(self.all_progress_list[pbar_idx])
+                self.msg(pbar, self.all_progress_list[pbar_idx])
 
     async def _download_init(self, task_core: list, src: str, loc: str, pbar: QProgressBar, pbar_idx: int) -> int:
         if not os.path.exists(loc):
@@ -177,16 +191,16 @@ class SFTPSession(QThread):
             await self.sftp.put(src, loc, progress_handler=update)
         except OSError:
             try:
-                all_size = await self.sftp.getsize(src)
-                pbar.setValue(self.all_progress_list[pbar_idx] + all_size - last_size)
+                all_size = os.path.getsize(src)
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx] + all_size - last_size)
             except asyncssh.SFTPError:
-                pbar.setValue(self.all_progress_list[pbar_idx])
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx])
         except asyncssh.SFTPError:
             try:
-                all_size = await self.sftp.getsize(src)
-                pbar.setValue(self.all_progress_list[pbar_idx] + all_size - last_size)
+                all_size = os.path.getsize(src)
+                self.msg.emit(pbar, self.all_progress_list[pbar_idx] + all_size - last_size)
             except asyncssh.SFTPError:
-                pbar.setValue(self.all_progress_list[pbar_idx])
+                self.msg(pbar, self.all_progress_list[pbar_idx])
 
     def _upload_init(self, task_list_mkdir: list, task_list_upload: list, src: str, loc: str,
                      pbar: QProgressBar, pbar_idx) -> int:
@@ -237,6 +251,10 @@ class SFTPSession(QThread):
 
     def run_command(self, com: str):
         return asyncio.run_coroutine_threadsafe(self._run_command(com), self.loop).result()
+
+    def realpath(self, src: str):
+        res = asyncio.run_coroutine_threadsafe(self.sftp.realpath(src.encode()), self.loop).result()
+        return res.decode()
 
 
 class RemoteFileDisplay(QWidget):
@@ -338,6 +356,9 @@ class RemoteFileDisplay(QWidget):
         for item in file_item:
             self.display_file_list.addItem(item)
 
+    def realpath(self, path: str):
+        return self.session.realpath(path)
+
 
 class GetTransportPathWidget(QWidget):
     def __init__(self, session) -> None:
@@ -375,7 +396,7 @@ class GetDownloadPathWidget(GetTransportPathWidget):
         self.src_button_dir.setVisible(False)
         self.remote_file.vbox.addWidget(self.remote_file.select_button)
         self.remote_file.select_button.clicked.connect(
-            lambda: self.src_edit.setText(self.remote_file.select_item.text()))
+            lambda: self.src_edit.setText(self.remote_file.realpath(self.remote_file.select_item.text())))
         self.src_button.clicked.connect(self.get_src_file)
         self.dst_button.clicked.connect(self.get_local_file)
         self.no_button.clicked.connect(lambda: main_window.stacked_widget.setCurrentIndex(0))
@@ -400,7 +421,7 @@ class GetUploadPathWidget(GetTransportPathWidget):
         self.main_window = main_window
         self.remote_file.vbox.addWidget(self.remote_file.select_button)
         self.remote_file.select_button.clicked.connect(
-            lambda: self.dst_edit.setText(self.remote_file.select_item.text()))
+            lambda: self.dst_edit.setText(self.remote_file.realpath(self.remote_file.select_item.text())))
         self.src_button.clicked.connect(self.get_src_file)
         self.dst_button.clicked.connect(self.get_local_file)
         self.no_button.clicked.connect(lambda: main_window.stacked_widget.setCurrentIndex(0))
@@ -415,13 +436,14 @@ class GetUploadPathWidget(GetTransportPathWidget):
         self.remote_file.show()
 
     def get_src_dir(self):
-        file = QFileDialog.getOpenFileName(self, "Open dir")
-        if file[0]:
-            self.src_edit.setText(file[0])
+        dir_path = QFileDialog.getExistingDirectory(self, "Open dir")
+        if dir_path[0]:
+            self.src_edit.setText(dir_path)
 
     def get_src_file(self):
-        file_path = QFileDialog.getExistingDirectory(self, "Open file")
-        self.src_edit.setText(file_path)
+        file_path = QFileDialog.getOpenFileName(self, "Open file")
+        if file_path[0]:
+            self.src_edit.setText(file_path)
 
 
 class CommandDisplay(QWidget):
@@ -574,7 +596,6 @@ class LoginWindow(QWidget):
         self.close()
         self.tab.addTab(self.sftp_main_window, "SFTP")
         self.sftp_widget_list.append(self.sftp_main_window)
-        # self.sftp_main_window.show()
 
 
 class UserMainWindow(QMainWindow):
