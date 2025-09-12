@@ -4,12 +4,13 @@ import asyncssh
 import os
 import threading
 
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from asyncio_pool import AioPool
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QPoint
+from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QPoint, QModelIndex
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QProgressBar, QLineEdit, QFormLayout, QLabel, \
     QPushButton, QHBoxLayout, QStyle, QListWidget, QListWidgetItem, QTextEdit, QStackedWidget, QFileDialog, QGridLayout, \
-    QMenu, QInputDialog, QMainWindow, QTabWidget
+    QMenu, QInputDialog, QMainWindow, QTabWidget, QComboBox, QCheckBox
+from user_database import UserInfoData
 
 
 def path_stand(src: str, loc: str) -> tuple[str, str]:
@@ -28,6 +29,33 @@ def path_stand(src: str, loc: str) -> tuple[str, str]:
     loc: str = loc.removesuffix('/')
     loc: str = '/'.join((loc, src.split('/')[-1]))
     return src, loc
+
+
+class PasswordController(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.userinfo = UserInfoData()
+        self.vbox = QVBoxLayout()
+        self.user_list_widget = QListWidget()
+        self.vbox.addWidget(self.user_list_widget)
+        self.setLayout(self.vbox)
+        self.idxs = []
+        self.user_list_widget.clicked.connect(self.item_clicked)
+
+    def add_all_user(self):
+        for value in self.userinfo.query_all():
+            self.add_item(*value)
+
+    def add_item(self, idx, host, port, username, password):
+        self.idxs.append(idx)
+        item = QListWidgetItem(f"ip地址: {host} 端口号:{port} 用户名:{username} 密码:{password}")
+        item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
+        self.user_list_widget.addItem(item)
+
+    def item_clicked(self, idx: QModelIndex):
+        self.user_list_widget.takeItem(idx.row())
+        self.userinfo.del_idx(self.idxs[idx.row()])
+
 
 
 class Edit(QWidget):
@@ -467,6 +495,7 @@ class ControlWindow:
         # self.command_display = MyTerminal(self.main_window.host, self.main_window.port, self.main_window.username,
         #                                   self.main_window.password)
         self.command_edit = QLineEdit()
+        self.password_control = QPushButton("密码管理")
         self.submit_button = QPushButton("提交命令")
         self.hbox_command = QHBoxLayout()
         self.transport_button = QPushButton("传输管理")
@@ -484,6 +513,7 @@ class ControlWindow:
         self.hbox_command.addWidget(self.command_edit)
         self.hbox_command.addWidget(self.submit_button)
         self.main_window.vbox.addLayout(self.hbox_command)
+        self.main_window.vbox.addWidget(self.password_control)
         self.main_window.vbox.addWidget(self.back_main_window)
         self.main_window.vbox.addWidget(self.transport_button)
         self.hbox_transport.addWidget(self.download_button)
@@ -493,11 +523,16 @@ class ControlWindow:
         self.transport_button.clicked.connect(lambda: self.main_window.stacked_widget.setCurrentIndex(1))
         self.download_button.clicked.connect(lambda: self.main_window.stacked_widget.setCurrentIndex(2))
         self.upload_button.clicked.connect(lambda: self.main_window.stacked_widget.setCurrentIndex(3))
+        self.password_control.clicked.connect(self.password_changed)
         self.submit_button.clicked.connect(self.run_command)
 
     def run_command(self):
         res = self.main_window.session.run_command(self.command_edit.text())
         self.command_display.edit.setPlainText(res.stdout + res.stderr)
+
+    def password_changed(self):
+        self.main_window.password_control.add_all_user()
+        self.main_window.stacked_widget.setCurrentIndex(4)
 
 
 class SFTPMainWindow(QWidget):
@@ -515,6 +550,7 @@ class SFTPMainWindow(QWidget):
         self.remote_file_widget = RemoteFileDisplay(self.session)
         self.download_widget = GetDownloadPathWidget(self.session, self)
         self.upload_widget = GetUploadPathWidget(self.session, self)
+        self.password_control = PasswordController()
         self.vbox = QVBoxLayout()
         self.setLayout(self.vbox)
         self.init_ui()
@@ -527,6 +563,7 @@ class SFTPMainWindow(QWidget):
         self.stacked_widget.addWidget(self.display_pbar_list)
         self.stacked_widget.addWidget(self.download_widget)
         self.stacked_widget.addWidget(self.upload_widget)
+        self.stacked_widget.addWidget(self.password_control)
 
     def add_pbar(self, src) -> QProgressBar:
         icon = QStyle.StandardPixmap.SP_FileIcon if self.session.is_file(src) else QStyle.StandardPixmap.SP_DirIcon
@@ -567,35 +604,79 @@ class LoginWindow(QWidget):
         self.form = QFormLayout()
         self.tab = tab
         self.setWindowTitle("Login")
+        self.combox = QComboBox()
         self.host_edit = QLineEdit()
         self.port_edit = QLineEdit()
         self.username_edit = QLineEdit()
         self.password_edit = QLineEdit()
         self.login_button = QPushButton("登陆")
         self.cancel_button = QPushButton("取消")
+        self.checkbox = QCheckBox()
+        self.userinfo = UserInfoData()
         self.sftp_main_window = SFTPMainWindow
         self.setLayout(self.form)
+        self.idxs = []
         self.init_ui()
+        self.password_display = False
 
     def init_ui(self):
+        self.combox.currentIndexChanged.connect(self.selected_item)
+        users = []
+        for query_value in self.userinfo.query_all():
+            idx = query_value[0]
+            host = query_value[1]
+            port = query_value[2]
+            username = query_value[3]
+            display_info = f"{host}:{username}"
+            self.idxs.append(idx)
+            users.append(display_info)
+        self.combox.addItems(users)
+        self.checkbox.clicked.connect(self.set_password_mode)
+
+        self.form.addRow(QLabel("存储ip"), self.combox)
         self.form.addRow(QLabel("服务器ip:"), self.host_edit)
         self.form.addRow(QLabel("端口号:"), self.port_edit)
         self.form.addRow(QLabel("用户名:"), self.username_edit)
         self.form.addRow(QLabel("密码:"), self.password_edit)
+        self.form.addRow(QLabel("显示密码"), self.checkbox)
         self.password_edit.setEchoMode(self.password_edit.EchoMode.Password)
         self.form.addRow(self.login_button, self.cancel_button)
         self.login_button.clicked.connect(self.login)
         self.cancel_button.clicked.connect(self.close)
+
+    def selected_item(self, idx: int):
+        value = self.userinfo.query_idx(self.idxs[idx])
+        host = value[1]
+        port = value[2]
+        username = value[3]
+        password = value[4]
+        self.host_edit.setText(host)
+        self.port_edit.setText(str(port))
+        self.username_edit.setText(username)
+        self.password_edit.setText(password)
 
     def login(self):
         host = self.host_edit.text()
         port = int(self.port_edit.text())
         username = self.username_edit.text()
         password = self.password_edit.text()
-        self.sftp_main_window = self.sftp_main_window(host, port, username, password)
+        try:
+            self.sftp_main_window = self.sftp_main_window(host, port, username, password)
+            self.userinfo.insert(host, port, username, password)
+        except Exception as e:
+            print(e)
+
         self.close()
-        self.tab.addTab(self.sftp_main_window, "SFTP")
+        self.tab.addTab(self.sftp_main_window, host)
         self.sftp_widget_list.append(self.sftp_main_window)
+
+    def set_password_mode(self):
+        if self.password_display:
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.password_display = False
+        else:
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.password_display = True
 
 
 class UserMainWindow(QMainWindow):
