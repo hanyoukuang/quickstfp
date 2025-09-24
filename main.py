@@ -887,7 +887,6 @@ class UserMainWindow(QMainWindow):
     def close_tab(self, index):
         self.tab.removeTab(index)
         self.sftp_widget[index].close()
-        del self.sftp_widget[index]
 
 
 if __name__ == '__main__':
