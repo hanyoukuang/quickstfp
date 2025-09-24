@@ -5,5 +5,7 @@
 pip install pyqt6
 pip install asyncssh
 pip install asyncio-pool
+pip install uvloop    # liux macos unix
+pip install winuvloop #windows
 python3 main.py
 ```
