@@ -369,6 +369,7 @@ class RemoteFileDisplay(QWidget):
         self.session = self.sftp_main_window.session
         self.main_window_path = self.session.getcwd()
         self.back_button = QPushButton("返回")
+        self.path_edit = QLineEdit()
         self.select_button = QPushButton("选择")
         self.no_button = QPushButton("取消")
         self.vbox = QVBoxLayout()
@@ -398,7 +399,12 @@ class RemoteFileDisplay(QWidget):
     def init_ui(self):
         self.back_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self.back_button.setStyleSheet("text-align: left;")
-        self.vbox.addWidget(self.back_button)
+        hbox = QHBoxLayout()
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setText(self.session.getcwd())
+        hbox.addWidget(self.back_button)
+        hbox.addWidget(self.path_edit)
+        self.vbox.addLayout(hbox)
         self.vbox.addWidget(self.display_file_list)
         self.back_button.clicked.connect(lambda: self.double_item_clicked(QListWidgetItem("..")))
         self.display_file_list.itemDoubleClicked.connect(self.double_item_clicked)
@@ -472,6 +478,7 @@ class RemoteFileDisplay(QWidget):
             self.session.change_dir(item.text())
             self.display_file_list.clear()
             self.display_dir()
+            self.path_edit.setText(self.session.getcwd())
             return
         src = item.text()
         edit = Edit(src, self.session.read_file(src))
