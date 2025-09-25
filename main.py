@@ -1,6 +1,8 @@
 import os
 import sys
 import asyncio
+from typing import Sequence
+
 import asyncssh
 import asyncio_pool
 
@@ -11,7 +13,7 @@ except ImportError:
 finally:
     uvloop.install()
 
-from PyQt6.QtGui import QAction, QDropEvent, QDragEnterEvent
+from PyQt6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QPoint, QModelIndex
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QProgressBar, QLineEdit, QFormLayout, QLabel, \
     QPushButton, QHBoxLayout, QStyle, QListWidget, QListWidgetItem, QTextEdit, QStackedWidget, QFileDialog, QGridLayout, \
@@ -44,31 +46,31 @@ class PasswordController(QWidget):
     * 成功登陆时，就会记住用户名，密码
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.userinfo = UserInfoData()
-        self.vbox = QVBoxLayout()
-        self.user_list_widget = QListWidget()
+        self.userinfo: UserInfoData = UserInfoData()
+        self.vbox: QVBoxLayout = QVBoxLayout()
+        self.user_list_widget: QListWidget = QListWidget()
         self.vbox.addWidget(self.user_list_widget)
         self.setLayout(self.vbox)
-        self.idxs = []
+        self.idxs: list[int] = list()
         self.user_list_widget.clicked.connect(self.item_clicked)
-        self.add_user_dict = dict()
+        self.add_user_dict: dict[tuple, bool] = dict()
 
-    def add_all_user(self):
+    def add_all_user(self) -> None:
         for value in self.userinfo.query_all():
             if self.add_user_dict.get(value):
                 continue
             self.add_user_dict[value] = True
             self.add_item(*value)
 
-    def add_item(self, idx, host, port, username, _password):
+    def add_item(self, idx, host, port, username, _password) -> None:
         self.idxs.append(idx)
         item = QListWidgetItem(f"ip地址: {host} 端口号:{port} 用户名:{username}")
         item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
         self.user_list_widget.addItem(item)
 
-    def item_clicked(self, idx: QModelIndex):
+    def item_clicked(self, idx: QModelIndex) -> None:
         """
         * 当用户点击item时先询问是否删除
         :param idx:
@@ -88,16 +90,16 @@ class Edit(QWidget):
     * 提供可以编辑文件
     """
 
-    def __init__(self, src, text):
+    def __init__(self, src: str, text: str) -> None:
         super().__init__()
         self.setGeometry(0, 0, 500, 500)
-        self.src = src
-        self.button = QPushButton("保存")
-        self.vbox = QVBoxLayout()
-        self.setLayout(self.vbox)
-        self.textEdit = QTextEdit(text)
+        self.src: str = src
+        self.button: QPushButton = QPushButton("保存")
+        self.vbox: QVBoxLayout = QVBoxLayout()
+        self.textEdit: QTextEdit = QTextEdit(text)
         self.vbox.addWidget(self.button)
         self.vbox.addWidget(self.textEdit)
+        self.setLayout(self.vbox)
         self.show()
 
 
@@ -108,15 +110,15 @@ class Transport(QThread):
         self.loc: str = loc
         self.co_num: int = co_num
         self.session = session
-        self.sftp = self.session.sftp
-        self.loop = self.session.loop
-        self.pbar: int = pbar  # 进度条编号
-        self.msg: pyqtSignal = session.msg  # 传输进度条的长度
-        self.pbar_msg = session.pbar_msg  # 初始化进度条
-        self.err_msg = session.err_msg  # 传输transport_fail_file的内容
+        self.sftp: asyncssh.SFTPClient = self.session.sftp
+        self.loop: asyncio.AbstractEventLoop = self.session.loop
+        self.task_core: list = []
         self.transport_fail_file: list[str] = []  # 记录传输失败的文件，往往由于权限，sftp服务器限制
         self.now_progress_bar: int = 0  # 记录目前进度条的长度
-        self.task_core = []
+        self.pbar: int = pbar  # 进度条编号
+        self.msg: pyqtSignal = session.msg  # 传输进度条的长度
+        self.pbar_msg: pyqtSignal = session.pbar_msg  # 初始化进度条
+        self.err_msg: pyqtSignal = session.err_msg  # 传输transport_fail_file的内容
 
     async def start_core(self):
         """
@@ -156,10 +158,10 @@ class Transport(QThread):
 
 
 class DownloadTransport(Transport):
-    def __init__(self, src: str, loc: str, co_num: int, session, pbar: int):
+    def __init__(self, src: str, loc: str, co_num: int, session, pbar: int) -> None:
         super().__init__(src, loc, co_num, session, pbar)
 
-    async def _transport_file(self, src: str, loc: str):
+    async def _transport_file(self, src: str, loc: str) -> None:
         last_size = 0
 
         def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
@@ -197,7 +199,7 @@ class DownloadTransport(Transport):
             total += await future
         return total
 
-    async def transport(self):
+    async def transport(self) -> None:
         src, loc = path_stand(self.src, self.loc)
         if await self.sftp.isdir(src):
             all_size = await self._transport_dir_init(src, loc)
@@ -211,11 +213,11 @@ class DownloadTransport(Transport):
 
 
 class UploadTransport(Transport):
-    def __init__(self, src: str, loc: str, co_num: int, session, pbar: int):
+    def __init__(self, src: str, loc: str, co_num: int, session, pbar: int) -> None:
         super().__init__(src, loc, co_num, session, pbar)
-        self.task_list_mkdir = []
+        self.task_list_mkdir = list()
 
-    async def _transport_file(self, src: str, loc: str):
+    async def _transport_file(self, src: str, loc: str) -> None:
         last_size = 0
 
         def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
@@ -232,7 +234,7 @@ class UploadTransport(Transport):
             self.now_progress_bar += all_size - last_size
             self.transport_fail_file.append(src)
 
-    def _transport_dir_init(self, src: str, loc: str):
+    def _transport_dir_init(self, src: str, loc: str) -> int:
         total_size: int = 0
         self.task_list_mkdir.append((self.sftp.makedirs(loc, exist_ok=True)))
         for entry in os.scandir(src):
@@ -246,7 +248,7 @@ class UploadTransport(Transport):
                 total_size += entry.stat().st_size
         return total_size
 
-    async def transport(self):
+    async def transport(self) -> None:
         src, loc = path_stand(self.src, self.loc)
         if os.path.isdir(src):
             all_size = self._transport_dir_init(src, loc)
@@ -269,67 +271,66 @@ class SFTPSession(QThread):
     pbar_msg = pyqtSignal(int, int)
     err_msg = pyqtSignal(str)
 
-    def __init__(self, host: str, port: int, username: str, password: str):
+    def __init__(self, host: str, port: int, username: str, password: str) -> None:
         super().__init__()
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
-        self.loop = asyncio.new_event_loop()
-        self.ssh = self.loop.run_until_complete(
+        self.host: str = host
+        self.port: int = port
+        self.username: str = username
+        self.password: str = password
+        self.transport: list[Transport] = []
+        self.loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self.ssh: asyncssh.SSHClientConnection = self.loop.run_until_complete(
             asyncssh.connect(host=host, port=port, username=username, password=password, known_hosts=None))
-        self.sftp = self.loop.run_until_complete(self.ssh.start_sftp_client())
-        self.process = self.loop.run_until_complete(self.ssh.create_process())
-        self.transport = []
+        self.sftp: asyncssh.SFTPClient = self.loop.run_until_complete(self.ssh.start_sftp_client())
 
-    def run(self):
+    def run(self) -> None:
         """
         让asyncio的事件循环在主线程中运行
         :return:
         """
         self.loop.run_forever()
 
-    def getcwd(self):
+    def getcwd(self) -> str:
         res = asyncio.run_coroutine_threadsafe(self.sftp.getcwd(), self.loop).result()
         return res
 
-    def read_dir(self, src: str):
+    def read_dir(self, src: str) -> Sequence[asyncssh.SFTPName]:
         res = asyncio.run_coroutine_threadsafe(self.sftp.readdir(src), self.loop).result()
         return res
 
-    def change_dir(self, src: str):
-        asyncio.run_coroutine_threadsafe(self.sftp.chdir(src), self.loop).result()
+    def change_dir(self, src: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self.sftp.chdir(src), self.loop).result()
 
-    def is_file(self, src: str):
+    def is_file(self, src: str) -> bool:
         return asyncio.run_coroutine_threadsafe(self.sftp.isfile(src), self.loop).result()
 
-    async def _read_file(self, src: str):
+    async def _read_file(self, src: str) -> str:
         text = ""
         async with self.sftp.open(src, 'rb') as f:
             text += (await f.read(1024)).decode()
         return text
 
-    def read_file(self, src: str):
+    def read_file(self, src: str) -> str:
         return asyncio.run_coroutine_threadsafe(self._read_file(src), self.loop).result()
 
-    async def _save_file(self, src: str, text: str):
+    async def _save_file(self, src: str, text: str) -> None:
         async with self.sftp.open(src, 'wb') as f:
             await f.write(text)
 
-    def save_file(self, src: str, text: str):
-        asyncio.run_coroutine_threadsafe(self._save_file(src, text), self.loop).result()
+    def save_file(self, src: str, text: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self._save_file(src, text), self.loop).result()
 
-    def del_file(self, src: str):
-        asyncio.run_coroutine_threadsafe(self.sftp.remove(src), self.loop).result()
+    def del_file(self, src: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self.sftp.remove(src), self.loop).result()
 
-    def del_dir(self, src: str):
-        asyncio.run_coroutine_threadsafe(self.remove_dir(src), self.loop).result()
+    def del_dir(self, src: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self.remove_dir(src), self.loop).result()
 
-    def make_dir(self, src: str):
-        asyncio.run_coroutine_threadsafe(self.sftp.makedirs(src, exist_ok=True), self.loop).result()
+    def make_dir(self, src: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self.sftp.makedirs(src, exist_ok=True), self.loop).result()
 
-    def rename(self, src: str, new: str):
-        asyncio.run_coroutine_threadsafe(self.sftp.rename(src, new), self.loop).result()
+    def rename(self, src: str, new: str) -> None:
+        _ = asyncio.run_coroutine_threadsafe(self.sftp.rename(src, new), self.loop).result()
 
     def download(self, src: str, loc: str, co_num: int, pbar: int) -> None:
         dt = DownloadTransport(src, loc, co_num, self, pbar)
@@ -341,69 +342,91 @@ class SFTPSession(QThread):
         ut.start()
         self.transport.append(ut)
 
-    async def remove_dir(self, src: str):
+    async def remove_dir(self, src: str) -> None:
         await self.ssh.run(f"rm -rf {src}")
 
-    async def _run_command(self, com: str):
+    async def _run_command(self, com: str) -> asyncssh.SSHCompletedProcess:
         result = await self.ssh.run(com)
         return result
 
-    def run_command(self, com: str):
+    def run_command(self, com: str) -> asyncssh.SSHCompletedProcess:
         return asyncio.run_coroutine_threadsafe(self._run_command(com), self.loop).result()
 
-    def realpath(self, src: str):
+    def realpath(self, src: str) -> str:
         res = asyncio.run_coroutine_threadsafe(self.sftp.realpath(src.encode()), self.loop).result()
         return res.decode()
 
-    def move_file(self, old_path: str, new_path: str):
-        self.run_command(f"mv {old_path} {new_path}")
+    def move_file(self, old_path: str, new_path: str) -> None:
+        _ = self.run_command(f"mv {old_path} {new_path}")
 
-    def copy_file(self, src: str, dst: str):
-        self.run_command(f"cp -r {src} {dst}")
+    def copy_file(self, src: str, dst: str) -> None:
+        _ = self.run_command(f"cp -r {src} {dst}")
 
 
 class RemoteFileDisplay(QWidget):
     def __init__(self, sftp_main_window) -> None:
         super().__init__()
+        self.dir_item: list[QListWidgetItem] = []
+        self.file_item: list[QListWidgetItem] = []
+        self.move_paths: list[str] = []
+        self.copy_paths: list[str] = []
         self.sftp_main_window = sftp_main_window
-        self.session = self.sftp_main_window.session
-        self.main_window_path = self.session.getcwd()
-        self.back_button = QPushButton("返回")
-        self.path_edit = QLineEdit()
+        self.session: SFTPSession = self.sftp_main_window.session
+        self.main_window_path: str = self.session.getcwd()
+        self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
         self.no_button = QPushButton("取消")
+        self.path_edit = QLineEdit()
+        self.search_edit = QLineEdit()
+        self.search_label = QLabel("搜索文件:")
         self.vbox = QVBoxLayout()
         self.setLayout(self.vbox)
         self.display_file_list = QListWidget()
-        self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        self.init_ui()
         self.select_item = None
-        self.move_paths = []
-        self.copy_paths = []
-        self.setAcceptDrops(True)
-        self.display_file_list.setDragEnabled(True)
+        self.init_ui()
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
+    def search_edit_value(self, text) -> None:
+        if text == "":
+            for item in self.dir_item:
+                item.setHidden(False)
+            for item in self.file_item:
+                item.setHidden(False)
+            return
+        for item in self.dir_item:
+            if text not in item.text():
+                item.setHidden(True)
+        for item in self.file_item:
+            if text not in item.text():
+                item.setHidden(True)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()  # 接受拖放事件
 
-    def dropEvent(self, event: QDropEvent):
+    def dropEvent(self, event: QDropEvent) -> None:
         urls = event.mimeData().urls()
         for url in urls:
             self.sftp_main_window.upload(url.toLocalFile(), self.session.getcwd(), 2)
         event.acceptProposedAction()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: QCloseEvent) -> None:
         self.session.change_dir(self.main_window_path)
 
-    def init_ui(self):
+    def init_ui(self) -> None:
+        self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self.setAcceptDrops(True)
+        self.search_edit.textChanged.connect(self.search_edit_value)
         self.back_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self.back_button.setStyleSheet("text-align: left;")
         hbox = QHBoxLayout()
-        self.path_edit.setReadOnly(True)
-        self.path_edit.setText(self.session.getcwd())
+        hbox_search = QHBoxLayout()
+        hbox_search.addWidget(self.search_label)
+        hbox_search.addWidget(self.search_edit)
         hbox.addWidget(self.back_button)
         hbox.addWidget(self.path_edit)
+        hbox.addLayout(hbox_search)
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setText(self.session.getcwd())
         self.vbox.addLayout(hbox)
         self.vbox.addWidget(self.display_file_list)
         self.back_button.clicked.connect(lambda: self.double_item_clicked(QListWidgetItem("..")))
@@ -413,7 +436,7 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.display_file_list.customContextMenuRequested.connect(self.show_context_menu)
 
-    def show_context_menu(self, pos: QPoint):
+    def show_context_menu(self, pos: QPoint) -> None:
         item = self.display_file_list.itemAt(pos)
         context_menu = QMenu(self)
         reload_action = context_menu.addAction("刷新")
@@ -446,34 +469,34 @@ class RemoteFileDisplay(QWidget):
 
         context_menu.exec(self.display_file_list.mapToGlobal(pos))
 
-    def download_items(self):
+    def download_items(self) -> None:
         items = self.display_file_list.selectedItems()
         for item in items:
             self.download_item(item)
 
-    def download_item(self, item):
+    def download_item(self, item: QListWidgetItem) -> None:
         self.sftp_main_window.download(self.realpath(item.text()), "./tmp", 2)
 
-    def paste_items(self):
+    def paste_items(self) -> None:
         for old_path in self.copy_paths:
             self.session.copy_file(old_path, self.session.getcwd())
         self.copy_paths.clear()
         self.reload_dir()
 
-    def put_items(self):
+    def put_items(self) -> None:
         for old_path in self.move_paths:
             self.session.move_file(old_path, self.session.getcwd())
         self.move_paths.clear()
         self.reload_dir()
 
-    def reload_dir(self):
+    def reload_dir(self) -> None:
         self.display_file_list.clear()
         self.display_dir()
 
-    def item_clicked(self, item):
+    def item_clicked(self, item: QListWidgetItem) -> None:
         self.select_item = item
 
-    def double_item_clicked(self, item):
+    def double_item_clicked(self, item: QListWidgetItem) -> None:
         if not self.session.is_file(item.text()):
             self.session.change_dir(item.text())
             self.display_file_list.clear()
@@ -484,40 +507,40 @@ class RemoteFileDisplay(QWidget):
         edit = Edit(src, self.session.read_file(src))
         edit.button.clicked.connect(lambda: self.session.save_file(src, edit.textEdit.toPlainText()))
 
-    def del_items(self):
+    def del_items(self) -> None:
         items = self.display_file_list.selectedItems()
         for item in items:
             self.del_item(item)
         self.reload_dir()
 
-    def del_item(self, item):
+    def del_item(self, item: QListWidgetItem) -> None:
         src = self.realpath(item.text())
         if not self.session.is_file(src):
             self.session.del_dir(self.realpath(src))
             return
         self.session.del_file(src)
 
-    def makedir(self):
+    def makedir(self) -> None:
         text, ok = QInputDialog.getText(self, "新建", "输入文件夹名")
         if ok:
             self.session.make_dir(str(text))
             self.reload_dir()
 
-    def new_file(self):
+    def new_file(self) -> None:
         text, ok = QInputDialog.getText(self, "新建", "输入文件名")
         if ok:
             self.session.save_file(str(text), "")
             self.reload_dir()
 
-    def rename(self, item):
+    def rename(self, item: QListWidgetItem) -> None:
         text, ok = QInputDialog.getText(self, "重命名", "输入新的文件名")
         if ok:
             self.session.rename(item.text(), str(text))
             self.reload_dir()
 
-    def display_dir(self, src: str = "."):
-        dir_item = []
-        file_item = []
+    def display_dir(self, src: str = ".") -> None:
+        self.dir_item.clear()
+        self.file_item.clear()
         info = self.session.read_dir(src)
         for entry in info:
             if entry.filename == '.' or entry.filename == '..':
@@ -525,28 +548,28 @@ class RemoteFileDisplay(QWidget):
             icon = QStyle.StandardPixmap.SP_FileIcon if entry.attrs.type != 2 else QStyle.StandardPixmap.SP_DirIcon
             item = QListWidgetItem(entry.filename)
             item.setIcon(QApplication.style().standardIcon(icon))
-            dir_item.append(item) if entry.attrs.type == 2 else file_item.append(item)
-        for item in dir_item:
+            self.dir_item.append(item) if entry.attrs.type == 2 else self.file_item.append(item)
+        for item in self.dir_item:
             self.display_file_list.addItem(item)
-        for item in file_item:
+        for item in self.file_item:
             self.display_file_list.addItem(item)
 
-    def move_items(self):
+    def move_items(self) -> None:
         items = self.display_file_list.selectedItems()
         for item in items:
             self.move_item(item)
 
-    def move_item(self, item):
+    def move_item(self, item: QListWidgetItem) -> None:
         item.setHidden(True)
         path = self.realpath(item.text())
         self.move_paths.append(path)
 
-    def copy_items(self):
+    def copy_items(self) -> None:
         items = self.display_file_list.selectedItems()
         for item in items:
             self.copy_item(item)
 
-    def copy_item(self, item):
+    def copy_item(self, item: QListWidgetItem) -> None:
         path = self.realpath(item.text())
         self.copy_paths.append(path)
 
@@ -570,7 +593,7 @@ class GetTransportPathWidget(QWidget):
         self.remote_file = RemoteFileDisplay(self.sftp_main_window)
         self.init_ui()
 
-    def init_ui(self):
+    def init_ui(self) -> None:
         self.grid.addWidget(self.src_edit, 0, 0)
         self.grid.addWidget(self.src_button, 0, 1)
         self.grid.addWidget(self.src_button_dir, 0, 2)
@@ -592,21 +615,21 @@ class GetDownloadPathWidget(GetTransportPathWidget):
         self.dst_button.clicked.connect(self.get_local_file)
         self.ok_button.clicked.connect(self.start_download)
 
-    def selected_file(self):
+    def selected_file(self) -> None:
         self.src_edit.setText(self.remote_file.realpath(self.remote_file.select_item.text()))
         self.remote_file.close()
 
-    def start_download(self):
+    def start_download(self) -> None:
         if self.src_edit.text() and self.dst_edit.text() and self.co_num_edit.text():
             self.main_window.download(self.src_edit.text(), self.dst_edit.text(), int(self.co_num_edit.text()))
             self.close()
             return
         QMessageBox.warning(self, "参数警告", "请参数不能为空", QMessageBox.StandardButton.Ok)
 
-    def get_src_file(self):
+    def get_src_file(self) -> None:
         self.remote_file.show()
 
-    def get_local_file(self):
+    def get_local_file(self) -> None:
         file_path = QFileDialog.getExistingDirectory(self, "Open file")
         self.dst_edit.setText(file_path)
 
@@ -622,18 +645,18 @@ class GetUploadPathWidget(GetTransportPathWidget):
         self.ok_button.clicked.connect(self.start_upload)
         self.src_button_dir.clicked.connect(self.get_src_dir)
 
-    def start_upload(self):
+    def start_upload(self) -> None:
         if self.src_edit.text() and self.dst_edit.text() and self.co_num_edit.text():
             self.main_window.upload(self.src_edit.text(), self.dst_edit.text(), int(self.co_num_edit.text()))
             self.close()
             return
         QMessageBox.warning(self, "参数警告", "请把所有参数填写完整", QMessageBox.StandardButton.Ok)
 
-    def selected_file(self):
+    def selected_file(self) -> None:
         self.dst_edit.setText(self.remote_file.realpath(self.remote_file.select_item.text()))
         self.remote_file.close()
 
-    def get_local_file(self):
+    def get_local_file(self) -> None:
         self.remote_file.show()
 
     def get_src_dir(self):
@@ -662,25 +685,25 @@ class ControlListWidget(QWidget):
                          "传输管理": self.transport
                          }
 
-    def clicked_item(self, index: QModelIndex):
+    def clicked_item(self, index: QModelIndex) -> None:
         row = index.row()
         item = self.control_list.item(row)
         text = item.text()
         self.function[text]()
 
-    def password_changed(self):
+    def password_changed(self) -> None:
         self.sftp_main_window.password_control.add_all_user()
         self.sftp_main_window.stacked_widget.setCurrentIndex(2)
 
-    def sftp_file_list(self):
+    def sftp_file_list(self) -> None:
         self.sftp_main_window.stacked_widget.setCurrentIndex(0)
 
-    def transport(self):
+    def transport(self) -> None:
         self.sftp_main_window.stacked_widget.setCurrentIndex(1)
 
 
 class SFTPMainWindow(QWidget):
-    def __init__(self, host: str, port: int, username: str, password: str):
+    def __init__(self, host: str, port: int, username: str, password: str) -> None:
         super().__init__()
         self.host = host
         self.port = port
@@ -704,7 +727,7 @@ class SFTPMainWindow(QWidget):
         self.pbars = []
         self.init_ui()
 
-    def init_ui(self):
+    def init_ui(self) -> None:
         self.setWindowTitle("SFTP Session")
         self.splitter_control_transport.addWidget(self.control_windows)
         self.splitter_control_transport.addWidget(self.stacked_widget)
@@ -733,24 +756,24 @@ class SFTPMainWindow(QWidget):
         self.pbars.append(pbar)
         return len(self.pbars) - 1
 
-    def download(self, src: str, loc: str, co_num: int):
+    def download(self, src: str, loc: str, co_num: int) -> None:
         pbar = self.add_pbar(src)
         self.session.download(src, loc, co_num, pbar)
 
-    def upload(self, src: str, loc: str, co_num: int):
+    def upload(self, src: str, loc: str, co_num: int) -> None:
         pbar = self.add_pbar(src)
         self.session.upload(src, loc, co_num, pbar)
 
     @pyqtSlot(int, int)
-    def update_progress(self, pbar, value):
+    def update_progress(self, pbar, value) -> None:
         self.pbars[pbar].setValue(value)
 
     @pyqtSlot(int, int)
-    def set_progress(self, pbar, value):
+    def set_progress(self, pbar, value) -> None:
         self.pbars[pbar].setRange(0, value)
 
     @pyqtSlot(str)
-    def display_error(self, value):
+    def display_error(self, value) -> None:
         if value == "":
             return
         QMessageBox().warning(self, "传输警告", f"{value}传输失败，注意检查权限，和sftp配置文件",
@@ -758,7 +781,7 @@ class SFTPMainWindow(QWidget):
 
 
 class LoginWindow(QWidget):
-    def __init__(self, tab: QTabWidget, sftp_widget_list: list):
+    def __init__(self, tab: QTabWidget, sftp_widget_list: list) -> None:
         super().__init__()
         self.sftp_widget_list = sftp_widget_list
         self.form = QFormLayout()
@@ -779,7 +802,7 @@ class LoginWindow(QWidget):
         self.init_ui()
         self.password_display = False
 
-    def init_ui(self):
+    def init_ui(self) -> None:
         self.combox.currentIndexChanged.connect(self.selected_item)
         users = []
         for query_value in self.userinfo.query_all():
@@ -804,7 +827,7 @@ class LoginWindow(QWidget):
         self.login_button.clicked.connect(self.login)
         self.cancel_button.clicked.connect(self.close)
 
-    def selected_item(self, idx: int):
+    def selected_item(self, idx: int) -> None:
         value = self.userinfo.query_idx(self.idxs[idx])
         host = value[1]
         port = value[2]
@@ -815,7 +838,7 @@ class LoginWindow(QWidget):
         self.username_edit.setText(username)
         self.password_edit.setText(password)
 
-    def login(self):
+    def login(self) -> None:
         host = self.host_edit.text()
         port = int(self.port_edit.text())
         username = self.username_edit.text()
@@ -832,7 +855,7 @@ class LoginWindow(QWidget):
         except Exception as e:
             print(e)
 
-    def set_password_mode(self):
+    def set_password_mode(self) -> None:
         if self.password_display:
             self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.password_display = False
@@ -842,18 +865,18 @@ class LoginWindow(QWidget):
 
 
 class UserMainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.tab = QTabWidget()
         self.setCentralWidget(self.tab)
         self.init_ui()
-        self.login_windows = []
+        self.login_windows: list[LoginWindow] = []
         self.sftp_widget: list[SFTPMainWindow] = []
-        self.get_transport_path_widget = []
+        self.get_transport_path_widget: list[GetTransportPathWidget] = []
         self.show()
         self.login()
 
-    def init_ui(self):
+    def init_ui(self) -> None:
         self.tab.setTabsClosable(True)
         self.tab.tabCloseRequested.connect(self.close_tab)
         tool_bar = QToolBar()
@@ -871,27 +894,26 @@ class UserMainWindow(QMainWindow):
         tool_bar.addAction(download_action)
         tool_bar.addAction(upload_action)
 
-    def upload(self):
+    def upload(self) -> None:
         idx = self.tab.currentIndex()
         sftp_main_window = self.sftp_widget[idx]
         gp = GetUploadPathWidget(sftp_main_window)
         gp.show()
-
         self.get_transport_path_widget.append(gp)
 
-    def download(self):
+    def download(self) -> None:
         idx = self.tab.currentIndex()
         sftp_main_window = self.sftp_widget[idx]
         gd = GetDownloadPathWidget(sftp_main_window)
         gd.show()
         self.get_transport_path_widget.append(gd)
 
-    def login(self):
+    def login(self) -> None:
         login_window = LoginWindow(self.tab, self.sftp_widget)
         login_window.show()
         self.login_windows.append(login_window)
 
-    def close_tab(self, index):
+    def close_tab(self, index) -> None:
         self.tab.removeTab(index)
         self.sftp_widget[index].close()
 
