@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QComboBox, QCheckBox, QAbstractItemView, QSplitter,
     QMessageBox, QToolBar
 )
+from qdarktheme import setup_theme
 from user_database import UserInfoData
 
 # 尝试导入 uvloop 提高异步性能，兼容 Windows 和其他平台
@@ -999,5 +1000,6 @@ class UserMainWindow(QMainWindow):
 if __name__ == '__main__':
     os.makedirs("tmp", exist_ok=True)
     app = QApplication(sys.argv)
+    setup_theme("light")
     us = UserMainWindow()
     sys.exit(app.exec())
