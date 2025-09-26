@@ -1000,6 +1000,6 @@ class UserMainWindow(QMainWindow):
 if __name__ == '__main__':
     os.makedirs("tmp", exist_ok=True)
     app = QApplication(sys.argv)
-    setup_theme("light")
+    setup_theme("auto")
     us = UserMainWindow()
     sys.exit(app.exec())
