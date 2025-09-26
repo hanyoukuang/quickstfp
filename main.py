@@ -116,6 +116,7 @@ class Edit(QWidget):
 class Transport(QThread):
     """
     文件传输基类，支持上传和下载，管理进度条和错误信息
+    TODO: 增加断点续传
     """
 
     def __init__(self, src: str, loc: str, co_num: int, session, pbar: int) -> None:
@@ -155,7 +156,6 @@ class Transport(QThread):
 
     async def transport(self):
         """抽象方法，具体传输逻辑由子类实现"""
-        pass
 
     def run(self):
         """运行传输任务并处理错误信息"""
@@ -409,6 +409,7 @@ class SFTPSession(QThread):
 class RemoteFileDisplay(QWidget):
     """
     远程文件显示界面，支持文件浏览、编辑、删除、移动、复制等操作
+    TODO: 将文件拖出
     """
 
     def __init__(self, sftp_main_window) -> None:
