@@ -4,7 +4,8 @@
 其中注释部分由grok书写
 ```
 pip install pyqt6
-pip install pyqtdarktheme
+pip install pyqtdarktheme # 3.7 <= python version <= 3.11
+pip install pyqtdarktheme2 # python version >= 3.12
 pip install asyncssh
 pip install asyncio-pool
 pip install uvloop    # liux macos unix
