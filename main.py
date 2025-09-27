@@ -41,6 +41,7 @@ def path_stand(src: str, loc: str) -> tuple[str, str]:
     return src, loc
 
 
+
 class PasswordController(QWidget):
     """
     管理用户密码的界面，基于 host.db 数据库存储用户信息
@@ -423,11 +424,11 @@ class RemoteFileDisplay(QWidget):
         self.copy_paths = []  # 待复制的文件路径
         self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
-        self.no_button = QPushButton("取消")
         self.path_edit = QLineEdit()
         self.search_edit = QLineEdit()
         self.search_label = QLabel("搜索文件:")
         self.vbox = QVBoxLayout()
+        self.tool_hbox = QHBoxLayout()
         self.display_file_list = QListWidget()
         self.select_item = None
         self.setLayout(self.vbox)
@@ -440,16 +441,15 @@ class RemoteFileDisplay(QWidget):
         self.search_edit.textChanged.connect(self.search_edit_value)
         self.back_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self.back_button.setStyleSheet("text-align: left;")
-        hbox = QHBoxLayout()
         hbox_search = QHBoxLayout()
         hbox_search.addWidget(self.search_label)
         hbox_search.addWidget(self.search_edit)
-        hbox.addWidget(self.back_button)
-        hbox.addWidget(self.path_edit)
-        hbox.addLayout(hbox_search)
+        self.tool_hbox.addWidget(self.back_button)
+        self.tool_hbox.addWidget(self.path_edit)
+        self.tool_hbox.addLayout(hbox_search)
         self.path_edit.setReadOnly(True)
         self.path_edit.setText(self.session.getcwd())
-        self.vbox.addLayout(hbox)
+        self.vbox.addLayout(self.tool_hbox)
         self.vbox.addWidget(self.display_file_list)
         self.back_button.clicked.connect(lambda: self.double_item_clicked(QListWidgetItem("..")))
         self.display_file_list.itemDoubleClicked.connect(self.double_item_clicked)
@@ -644,6 +644,7 @@ class GetTransportPathWidget(QWidget):
         self.grid = QGridLayout()
         self.setLayout(self.grid)
         self.remote_file = RemoteFileDisplay(self.sftp_main_window)
+        self.remote_file.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.init_ui()
 
     def init_ui(self) -> None:
@@ -736,6 +737,29 @@ class GetUploadPathWidget(GetTransportPathWidget):
             self.src_edit.setText(file_path[0])
 
 
+class RemoteFileMainWindow(RemoteFileDisplay):
+    def __init__(self, sftp_main_window) -> None:
+        super().__init__(sftp_main_window)
+        self.get_upload_widget = None
+        self.get_download_widget = None
+        self.download_button = QPushButton("下载")
+        self.upload_button = QPushButton("上传")
+        self.tool_hbox.addWidget(self.download_button)
+        self.tool_hbox.addWidget(self.upload_button)
+        self.download_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.upload_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.download_button.clicked.connect(self.get_download_path)
+        self.upload_button.clicked.connect(self.get_upload_path)
+
+    def get_upload_path(self):
+        self.get_upload_widget = GetUploadPathWidget(self.sftp_main_window)
+        self.get_upload_widget.show()
+
+    def get_download_path(self):
+        self.get_download_widget = GetDownloadPathWidget(self.sftp_main_window)
+        self.get_download_widget.show()
+
+
 class ControlListWidget(QWidget):
     """控制面板，切换 SFTP 文件列表、密码管理和传输管理"""
 
@@ -790,7 +814,7 @@ class SFTPMainWindow(QWidget):
         self.session.start()
         self.stacked_widget = QStackedWidget()
         self.display_pbar_list = QListWidget()
-        self.remote_file_widget = RemoteFileDisplay(self)
+        self.remote_file_widget = RemoteFileMainWindow(self)
         self.download_widget = GetDownloadPathWidget(self)
         self.upload_widget = GetUploadPathWidget(self)
         self.password_control = PasswordController()
@@ -944,7 +968,6 @@ class UserMainWindow(QMainWindow):
         self.setCentralWidget(self.tab)
         self.login_windows = []
         self.sftp_widget = []
-        self.get_transport_path_widget = []
         self.init_ui()
         self.show()
         self.login()
@@ -956,35 +979,9 @@ class UserMainWindow(QMainWindow):
         tool_bar = QToolBar()
         self.addToolBar(tool_bar)
         new_action = QAction("新建会话", self)
-        download_action = QAction("下载", self)
-        upload_action = QAction("上传", self)
         new_action.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
-        download_action.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
-        upload_action.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
-        download_action.triggered.connect(self.download)
-        upload_action.triggered.connect(self.upload)
         new_action.triggered.connect(self.login)
         tool_bar.addAction(new_action)
-        tool_bar.addAction(download_action)
-        tool_bar.addAction(upload_action)
-
-    def upload(self) -> None:
-        """打开上传路径选择窗口"""
-        idx = self.tab.currentIndex()
-        if idx >= 0:
-            sftp_main_window = self.sftp_widget[idx]
-            gp = GetUploadPathWidget(sftp_main_window)
-            gp.show()
-            self.get_transport_path_widget.append(gp)
-
-    def download(self) -> None:
-        """打开下载路径选择窗口"""
-        idx = self.tab.currentIndex()
-        if idx >= 0:
-            sftp_main_window = self.sftp_widget[idx]
-            gd = GetDownloadPathWidget(sftp_main_window)
-            gd.show()
-            self.get_transport_path_widget.append(gd)
 
     def login(self) -> None:
         """打开登录窗口"""
