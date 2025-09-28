@@ -4,9 +4,9 @@ import asyncio
 from typing import Sequence
 import asyncssh
 import asyncio_pool
-from PyQt6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QPoint, QModelIndex
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex
+from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QProgressBar, QLineEdit, QFormLayout,
     QLabel, QPushButton, QHBoxLayout, QStyle, QListWidget, QListWidgetItem,
     QTextEdit, QStackedWidget, QFileDialog, QGridLayout, QMenu, QInputDialog,
@@ -309,9 +309,9 @@ class SFTPSession(QThread):
     """
     SFTP 会话管理类，负责与远程服务器的连接和文件操作
     """
-    msg = pyqtSignal(int, int)  # 进度条更新信号
-    pbar_msg = pyqtSignal(int, int)  # 进度条初始化信号
-    err_msg = pyqtSignal(str)  # 错误信息信号
+    msg = Signal(int, int)  # 进度条更新信号
+    pbar_msg = Signal(int, int)  # 进度条初始化信号
+    err_msg = Signal(str)  # 错误信息信号
 
     def __init__(self, host: str, port: int, username: str, password: str) -> None:
         super().__init__()
@@ -878,17 +878,17 @@ class SFTPMainWindow(QWidget):
         pbar = self.add_pbar(src)
         self.session.upload(src, loc, co_num, pbar)
 
-    @pyqtSlot(int, int)
+    @Slot(int, int)
     def update_progress(self, pbar, value) -> None:
         """更新进度条值"""
         self.pbars[pbar].setValue(value)
 
-    @pyqtSlot(int, int)
+    @Slot(int, int)
     def set_progress(self, pbar, value) -> None:
         """设置进度条范围"""
         self.pbars[pbar].setRange(0, value)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def display_error(self, value) -> None:
         """显示传输错误信息"""
         if value:
