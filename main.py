@@ -172,6 +172,7 @@ class Transport(QThread):
         _ = asyncio.run_coroutine_threadsafe(self.transport(), self.loop).result()
         err_src_str = "\n".join(self.transport_fail_file)
         self.err_msg.emit(err_src_str)
+        self.deleteLater()
 
 
 class DownloadTransport(Transport):
