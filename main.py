@@ -169,7 +169,7 @@ class Transport(QThread):
 
     def run(self):
         """运行传输任务并处理错误信息"""
-        asyncio.run_coroutine_threadsafe(self.transport(), self.loop).result()
+        _ = asyncio.run_coroutine_threadsafe(self.transport(), self.loop).result()
         err_src_str = "\n".join(self.transport_fail_file)
         self.err_msg.emit(err_src_str)
 
@@ -487,7 +487,7 @@ class RemoteFileDisplay(QWidget):
     def dropEvent(self, event: QDropEvent) -> None:
         """处理拖放释放事件，上传拖放的文件"""
         for url in event.mimeData().urls():
-            self.sftp_main_window.upload(url.toLocalFile(), self.session.getcwd(), 2)
+            self.sftp_main_window.upload(url.toLocalFile(), self.session.getcwd(), 10)
         event.acceptProposedAction()
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -530,7 +530,7 @@ class RemoteFileDisplay(QWidget):
 
     def download_item(self, item: QListWidgetItem) -> None:
         """下载单个文件或目录"""
-        self.sftp_main_window.download(self.realpath(item.text()), "./tmp", 2)
+        self.sftp_main_window.download(self.realpath(item.text()), "./tmp", 10)
 
     def paste_items(self) -> None:
         """粘贴复制的文件或目录"""
@@ -661,6 +661,8 @@ class GetTransportPathWidget(QWidget):
 
     def init_ui(self) -> None:
         """初始化界面布局"""
+        self.src_edit.setReadOnly(True)
+        self.dst_edit.setReadOnly(True)
         self.grid.addWidget(self.src_edit, 0, 0)
         self.grid.addWidget(self.src_button, 0, 1)
         self.grid.addWidget(self.src_button_dir, 0, 2)
@@ -849,14 +851,14 @@ class SFTPMainWindow(QWidget):
         self.stacked_widget.addWidget(self.display_pbar_list)  # 1: 传输管理
         self.stacked_widget.addWidget(self.password_control)  # 2: 密码管理
 
-    def add_pbar(self, src) -> int:
+    def add_pbar(self, src, transport_type: str) -> int:
         """添加进度条到传输管理界面"""
         icon = QStyle.StandardPixmap.SP_FileIcon if self.session.is_file(src) else QStyle.StandardPixmap.SP_DirIcon
         pbar = QProgressBar()
         item = QListWidgetItem(self.display_pbar_list)
         item_widget = QWidget()
         layout = QHBoxLayout(item_widget)
-        text_label = QLabel(src)
+        text_label = QLabel(f"{transport_type}: {src}")
         picture_label = QLabel()
         picture_label.setPixmap(QApplication.style().standardIcon(icon).pixmap(16, 16))
         layout.addWidget(picture_label)
@@ -870,12 +872,12 @@ class SFTPMainWindow(QWidget):
 
     def download(self, src: str, loc: str, co_num: int) -> None:
         """启动下载任务并添加进度条"""
-        pbar = self.add_pbar(src)
+        pbar = self.add_pbar(src, "下载")
         self.session.download(src, loc, co_num, pbar)
 
     def upload(self, src: str, loc: str, co_num: int) -> None:
         """启动上传任务并添加进度条"""
-        pbar = self.add_pbar(src)
+        pbar = self.add_pbar(src, "上传")
         self.session.upload(src, loc, co_num, pbar)
 
     @Slot(int, int)
