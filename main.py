@@ -41,7 +41,6 @@ def path_stand(src: str, loc: str) -> tuple[str, str]:
     return src, loc
 
 
-
 class PasswordController(QWidget):
     """
     管理用户密码的界面，基于 host.db 数据库存储用户信息
@@ -101,17 +100,27 @@ class Edit(QWidget):
     文件编辑窗口，用于编辑远程文件内容
     """
 
-    def __init__(self, src: str, text: str) -> None:
+    def __init__(self, session, src: str, text: str) -> None:
         super().__init__()
         self.setGeometry(0, 0, 500, 500)  # 设置窗口大小
         self.src = src  # 文件路径
-        self.button = QPushButton("保存")  # 保存按钮
+        self.session = session
+        self.text = text
         self.vbox = QVBoxLayout()  # 垂直布局
-        self.textEdit = QTextEdit(text)  # 文本编辑区域
-        self.vbox.addWidget(self.button)
+        self.textEdit = QTextEdit()  # 文本编辑区域
+        self.textEdit.setText(text)
         self.vbox.addWidget(self.textEdit)
         self.setLayout(self.vbox)
         self.show()
+
+    def closeEvent(self, event) -> None:
+        now_text = self.textEdit.toPlainText()
+        if now_text == self.text:
+            return
+        reply = QMessageBox.question(self, "文件", "文件有改动，是否保存",
+                                     QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        if reply == QMessageBox.StandardButton.Ok:
+            self.session.save_file(self.src, now_text)
 
 
 class Transport(QThread):
@@ -338,8 +347,10 @@ class SFTPSession(QThread):
 
     async def _read_file(self, src: str) -> str:
         """异步读取文件内容"""
+        text = ""
         async with self.sftp.open(src, 'rb') as f:
-            return (await f.read(1024)).decode()
+            text += (await f.read()).decode()
+        return text
 
     def read_file(self, src: str) -> str:
         """同步读取文件内容"""
@@ -422,6 +433,7 @@ class RemoteFileDisplay(QWidget):
         self.file_item = []  # 文件项列表
         self.move_paths = []  # 待移动的文件路径
         self.copy_paths = []  # 待复制的文件路径
+        self.edits = []
         self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
         self.path_edit = QLineEdit()
@@ -552,8 +564,8 @@ class RemoteFileDisplay(QWidget):
             self.path_edit.setText(self.session.getcwd())
             return
         src = item.text()
-        edit = Edit(src, self.session.read_file(src))
-        edit.button.clicked.connect(lambda: self.session.save_file(src, edit.textEdit.toPlainText()))
+        edit = Edit(self.session, src, self.session.read_file(src))
+        self.edits.append(edit)
 
     def del_items(self) -> None:
         """删除选中的文件或目录"""
@@ -880,7 +892,7 @@ class SFTPMainWindow(QWidget):
     def display_error(self, value) -> None:
         """显示传输错误信息"""
         if value:
-            QMessageBox.warning(self, "传输警告", f"{value}传输失败，注意检查权限和SFTP配置文件",
+            QMessageBox.warning(self, "传输警告", f"{value}\n传输失败，注意检查权限和SFTP配置文件",
                                 QMessageBox.StandardButton.Ok)
 
 
