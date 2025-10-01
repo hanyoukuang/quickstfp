@@ -600,7 +600,6 @@ class CheckNewFile(QThread):
         self.session = self.remote_file_display.session
         self.new_file_msg = self.remote_file_display.new_file_msg
         self.sub_file_msg = self.remote_file_display.sub_file_msg
-        self.into_dir_flag = None
 
     def check_new_file(self):
         """
@@ -635,23 +634,9 @@ class CheckNewFile(QThread):
         Runs the file monitoring loop, checking for new or removed files every second.
         """
         while True:
-            if self.into_dir_flag:
-                continue
+            time.sleep(5)
             self.check_new_file()
             self.check_sub_file()
-            time.sleep(1)
-
-    def into_dir(self):
-        """
-        Pauses file monitoring when entering a directory.
-        """
-        self.into_dir_flag = True
-
-    def back_dir(self):
-        """
-        Resumes file monitoring when exiting a directory.
-        """
-        self.into_dir_flag = False
 
 
 class RemoteFileDisplay(QWidget):
@@ -697,6 +682,8 @@ class RemoteFileDisplay(QWidget):
         :param new_files: List of new file entries to display.
         """
         for entry in new_files:
+            if entry.filename in self.all_files_dict:
+                continue
             item = QListWidgetItem(entry.filename)
             self.all_files_dict[entry.filename] = item
             if entry.attrs.type == 2:
@@ -714,8 +701,9 @@ class RemoteFileDisplay(QWidget):
         :param sub_files: List of file names that were removed.
         """
         for name in sub_files:
-            self.all_files_dict[name].setHidden(True)
-            self.all_files_dict.pop(name)
+            if name in self.all_files_dict:
+                self.all_files_dict[name].setHidden(True)
+                self.all_files_dict.pop(name)
 
     def init_ui(self) -> None:
         """
@@ -945,7 +933,6 @@ class RemoteFileDisplay(QWidget):
 
         :param src: Path to the directory to display (default: current directory).
         """
-        self.check_new_file.into_dir()
         self.all_files_dict.clear()
         dir_names = []
         file_names = []
@@ -963,7 +950,6 @@ class RemoteFileDisplay(QWidget):
             item.setIcon(QApplication.style().standardIcon(icon))
         for item in dir_names + file_names:
             self.display_file_list.addItem(item)
-        self.check_new_file.back_dir()
 
     def move_items(self) -> None:
         """
@@ -1446,8 +1432,8 @@ class LoginWindow(QWidget):
                 self.sftp_widget_list.append(self.sftp_main_window)
             else:
                 QMessageBox.warning(self, "参数警告", "请参数不能为空", QMessageBox.StandardButton.Ok)
-        except Exception as e:
-            print(e)
+        except:
+            QMessageBox.warning(self, "密码", "请检查网络和用户名密码", QMessageBox.StandardButton.Ok)
 
     def set_password_mode(self) -> None:
         """
