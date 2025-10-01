@@ -803,11 +803,9 @@ class RemoteFileDisplay(QWidget):
         if item:
             edit_action = context_menu.addAction("打开")
             del_action = context_menu.addAction("删除")
-            rename_action = context_menu.addAction("重命名")
             move_action = context_menu.addAction("移动")
             copy_action = context_menu.addAction("复制")
             download_action = context_menu.addAction("下载")
-            rename_action.triggered.connect(lambda: self.rename(item))
             edit_action.triggered.connect(lambda: self.double_item_clicked(item))
             del_action.triggered.connect(self.del_items)
             move_action.triggered.connect(self.move_items)
@@ -817,6 +815,9 @@ class RemoteFileDisplay(QWidget):
             context_menu.addAction("放置").triggered.connect(self.put_items)
         if self.copy_paths:
             context_menu.addAction("粘贴").triggered.connect(self.paste_items)
+        if len(self.display_file_list.selectedItems()) == 1:
+            rename_action = context_menu.addAction("重命名")
+            rename_action.triggered.connect(lambda: self.rename(item))
         context_menu.exec(self.display_file_list.mapToGlobal(pos))
 
     def download_items(self) -> None:
@@ -874,12 +875,10 @@ class RemoteFileDisplay(QWidget):
         :param item: Double-clicked list widget item.
         """
         if not self.session.is_file(item.text()):
-            self.check_new_file.into_dir()
             self.session.change_dir(item.text())
             self.display_file_list.clear()
             self.display_dir()
             self.path_edit.setText(self.session.getcwd())
-            self.check_new_file.back_dir()
             return
         src = item.text()
         edit = Edit(self.session, src, self.session.read_file(src))
@@ -946,6 +945,7 @@ class RemoteFileDisplay(QWidget):
 
         :param src: Path to the directory to display (default: current directory).
         """
+        self.check_new_file.into_dir()
         self.all_files_dict.clear()
         dir_names = []
         file_names = []
@@ -963,6 +963,7 @@ class RemoteFileDisplay(QWidget):
             item.setIcon(QApplication.style().standardIcon(icon))
         for item in dir_names + file_names:
             self.display_file_list.addItem(item)
+        self.check_new_file.back_dir()
 
     def move_items(self) -> None:
         """
@@ -1357,7 +1358,7 @@ class SFTPMainWindow(QWidget):
     @Slot(str)
     def display_error(self, value: str) -> None:
         """
-        Displays transfer error messages -> tranport_fail_file(dir).
+        Displays transfer error messages.
 
         :param value: Error message to display.
         """
@@ -1420,7 +1421,7 @@ class LoginWindow(QWidget):
         """
         Fills the input fields with selected user information.
 
-        :param idx: Index of the selected user in the sql.
+        :param idx: Index of the selected user in the combo box.
         """
         value = self.userinfo.query_idx(self.idxs[idx])
         self.host_edit.setText(value[1])
