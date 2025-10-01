@@ -1,12 +1,11 @@
 import os
 import sys
-import time
 import asyncio
 from typing import Sequence
 import asyncssh
 import asyncio_pool
 from PySide6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex, QMutex
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QProgressBar, QLineEdit, QLabel, QPushButton, QStyle, QListWidget,
@@ -588,72 +587,11 @@ class SFTPSession(QThread):
         self.run_command(f"cp -r {src} {dst}")
 
 
-class CheckNewFile(QThread):
-    def __init__(self, remote_file_display: 'RemoteFileDisplay'):
-        """
-        Initializes the CheckNewFile thread to monitor file changes in the remote directory.
-
-        :param remote_file_display: RemoteFileDisplay widget for file monitoring.
-        """
-        super().__init__()
-        self.remote_file_display = remote_file_display
-        self.session = self.remote_file_display.session
-        self.new_file_msg = self.remote_file_display.new_file_msg
-        self.sub_file_msg = self.remote_file_display.sub_file_msg
-
-    def check_new_file(self):
-        """
-        Checks for new files in the current remote directory and emits a signal if found.
-        """
-        self.remote_file_display.mutex.lock()
-        try:
-            new_files = []
-            all_files_dict = self.remote_file_display.all_files_dict
-            for entry in self.session.read_dir("."):
-                filename = entry.filename
-                if filename in (".", ".."):
-                    continue
-                if filename not in all_files_dict:
-                    new_files.append(entry)
-            if new_files:
-                self.new_file_msg.emit(new_files)
-        finally:
-            self.remote_file_display.mutex.unlock()
-
-    def check_sub_file(self):
-        """
-        Checks for removed files in the current remote directory and emits a signal if found.
-        """
-        self.remote_file_display.mutex.lock()
-        try:
-            sub_files = []
-            all_files_dict = self.remote_file_display.all_files_dict
-            remote_file_names = set([entry.filename for entry in self.session.read_dir(".")])
-            for name in all_files_dict.keys():
-                if name not in remote_file_names:
-                    sub_files.append(name)
-            if sub_files:
-                self.sub_file_msg.emit(sub_files)
-        finally:
-            self.remote_file_display.mutex.unlock()
-
-    def run(self):
-        """
-        Runs the file monitoring loop, checking for new or removed files every second.
-        """
-        while True:
-            time.sleep(5)
-            self.check_new_file()
-            self.check_sub_file()
-
-
 class RemoteFileDisplay(QWidget):
     """
     Remote file display interface, supporting file browsing, editing, deletion, moving, and copying.
     TODO: Add support for dragging files out.
     """
-    new_file_msg = Signal(list)
-    sub_file_msg = Signal(list)
 
     def __init__(self, sftp_main_window: 'SFTPMainWindow') -> None:
         """
@@ -669,7 +607,6 @@ class RemoteFileDisplay(QWidget):
         self.copy_paths = []  # Paths to copy
         self.edits = []
         self.all_files_dict: dict[str, QListWidgetItem] = dict()
-        self.mutex = QMutex()
         self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
         self.path_edit = QLineEdit()
@@ -680,46 +617,7 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list = QListWidget()
         self.select_item = None
         self.setLayout(self.vbox)
-        self.check_new_file = CheckNewFile(self)
         self.init_ui()
-
-    @Slot(list)
-    def get_new_file(self, new_files: list):
-        """
-        Handles new files detected in the remote directory.
-
-        :param new_files: List of new file entries to display.
-        """
-        self.mutex.lock()
-        try:
-            for entry in new_files:
-                if entry.filename in self.all_files_dict:
-                    continue
-                item = QListWidgetItem(entry.filename)
-                self.all_files_dict[entry.filename] = item
-                if entry.attrs.type == 2:
-                    icon = QStyle.StandardPixmap.SP_DirIcon
-                else:
-                    icon = QStyle.StandardPixmap.SP_FileIcon
-                item.setIcon(QApplication.style().standardIcon(icon))
-                self.display_file_list.addItem(item)
-        finally:
-            self.mutex.unlock()
-
-    @Slot(list)
-    def get_sub_file(self, sub_files: list):
-        """
-        Handles files removed from the remote directory.
-
-        :param sub_files: List of file names that were removed.
-        """
-        self.mutex.lock()
-        try:
-            for name in sub_files:
-                self.all_files_dict[name].setHidden(True)
-                self.all_files_dict.pop(name)
-        finally:
-            self.mutex.unlock()
 
     def init_ui(self) -> None:
         """
@@ -746,9 +644,6 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.display_file_list.customContextMenuRequested.connect(self.show_context_menu)
         self.display_dir(".")
-        self.check_new_file.start()
-        self.new_file_msg.connect(self.get_new_file)
-        self.sub_file_msg.connect(self.get_sub_file)
 
     def search_edit_value(self, text: str) -> None:
         """
@@ -756,16 +651,13 @@ class RemoteFileDisplay(QWidget):
 
         :param text: Search text to filter items.
         """
-        self.mutex.lock()
-        try:
-            if not text:
-                for item in self.all_files_dict.values():
-                    item.setHidden(False)
-                return
+
+        if not text:
             for item in self.all_files_dict.values():
-                item.setHidden(text not in item.text())
-        finally:
-            self.mutex.unlock()
+                item.setHidden(False)
+            return
+        for item in self.all_files_dict.values():
+            item.setHidden(text not in item.text())
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """
@@ -953,27 +845,24 @@ class RemoteFileDisplay(QWidget):
 
         :param src: Path to the directory to display (default: current directory).
         """
-        self.mutex.lock()
-        try:
-            self.all_files_dict.clear()
-            dir_names = []
-            file_names = []
-            for entry in self.session.read_dir(src):
-                if entry.filename in ('.', '..'):
-                    continue
-                item = QListWidgetItem(entry.filename)
-                self.all_files_dict[entry.filename] = item
-                if entry.attrs.type == 2:
-                    dir_names.append(item)
-                    icon = QStyle.StandardPixmap.SP_DirIcon
-                else:
-                    file_names.append(item)
-                    icon = QStyle.StandardPixmap.SP_FileIcon
-                item.setIcon(QApplication.style().standardIcon(icon))
-            for item in dir_names + file_names:
-                self.display_file_list.addItem(item)
-        finally:
-            self.mutex.unlock()
+
+        self.all_files_dict.clear()
+        dir_names = []
+        file_names = []
+        for entry in self.session.read_dir(src):
+            if entry.filename in ('.', '..'):
+                continue
+            item = QListWidgetItem(entry.filename)
+            self.all_files_dict[entry.filename] = item
+            if entry.attrs.type == 2:
+                dir_names.append(item)
+                icon = QStyle.StandardPixmap.SP_DirIcon
+            else:
+                file_names.append(item)
+                icon = QStyle.StandardPixmap.SP_FileIcon
+            item.setIcon(QApplication.style().standardIcon(icon))
+        for item in dir_names + file_names:
+            self.display_file_list.addItem(item)
 
     def move_items(self) -> None:
         """
