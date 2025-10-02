@@ -663,22 +663,22 @@ class RemoteFileDisplay(QWidget):
         filename = entry.filename
         if filename in (".", ".."):
             return
-        if self.mutex.tryLock():
-            item = QListWidgetItem(filename)
-            icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
-            item.setIcon(QApplication.style().standardIcon(icon))
-            self.display_file_list.addItem(item)
-            self.all_files_dict[filename] = item
-            self.mutex.unlock()
+        self.mutex.lock()
+        item = QListWidgetItem(filename)
+        icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
+        item.setIcon(QApplication.style().standardIcon(icon))
+        self.display_file_list.addItem(item)
+        self.all_files_dict[filename] = item
+        self.mutex.unlock()
 
     @Slot(str)
     def del_sub_file(self, file: str):
-        if self.mutex.tryLock() and (file in self.all_files_dict):
-            item = self.all_files_dict[file]
-            row = self.display_file_list.row(item)
-            self.display_file_list.takeItem(row)
-            self.all_files_dict.pop(file)
-            self.mutex.unlock()
+        self.mutex.lock()
+        item = self.all_files_dict[file]
+        row = self.display_file_list.row(item)
+        self.display_file_list.takeItem(row)
+        self.all_files_dict.pop(file)
+        self.mutex.unlock()
 
     def init_ui(self) -> None:
         """
