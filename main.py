@@ -1,11 +1,12 @@
 import os
 import sys
 import asyncio
+import time
 from typing import Sequence
 import asyncssh
 import asyncio_pool
 from PySide6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex, QMutex
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QProgressBar, QLineEdit, QLabel, QPushButton, QStyle, QListWidget,
@@ -587,11 +588,47 @@ class SFTPSession(QThread):
         self.run_command(f"cp -r {src} {dst}")
 
 
+class CheckNewFile(QThread):
+    def __init__(self, remote_file_display: 'RemoteFileDisplay'):
+        super().__init__()
+        self.remote_file_display = remote_file_display
+        self.new_file_msg = self.remote_file_display.new_file_msg
+        self.sub_file_msg = self.remote_file_display.sub_file_msg
+        self.session = self.remote_file_display.session
+        self.mutex = self.remote_file_display.mutex
+
+    def check_new_file(self):
+        if self.mutex.tryLock():
+            now_file_list = self.session.read_dir(".")
+            all_file_dict = self.remote_file_display.all_files_dict
+            for entry in now_file_list:
+                if entry.filename not in all_file_dict:
+                    self.new_file_msg.emit(entry)
+            self.mutex.unlock()
+
+    def check_sub_file(self):
+        if self.mutex.tryLock():
+            now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
+            all_file_dict = self.remote_file_display.all_files_dict
+            for file in all_file_dict:
+                if file not in now_file_list:
+                    self.sub_file_msg.emit(file)
+            self.mutex.unlock()
+
+    def run(self):
+        while True:
+            self.check_new_file()
+            self.check_sub_file()
+            time.sleep(3)
+
+
 class RemoteFileDisplay(QWidget):
     """
     Remote file display interface, supporting file browsing, editing, deletion, moving, and copying.
     TODO: Add support for dragging files out.
     """
+    new_file_msg = Signal(asyncssh.SFTPName)
+    sub_file_msg = Signal(str)
 
     def __init__(self, sftp_main_window: 'SFTPMainWindow') -> None:
         """
@@ -603,6 +640,7 @@ class RemoteFileDisplay(QWidget):
         self.sftp_main_window = sftp_main_window
         self.session = sftp_main_window.session
         self.main_window_path = self.session.getcwd()
+        self.mutex = QMutex()
         self.move_paths = []  # Paths to move
         self.copy_paths = []  # Paths to copy
         self.edits = []
@@ -615,9 +653,32 @@ class RemoteFileDisplay(QWidget):
         self.vbox = QVBoxLayout()
         self.tool_hbox = QHBoxLayout()
         self.display_file_list = QListWidget()
+        self.checker = CheckNewFile(self)
         self.select_item = None
         self.setLayout(self.vbox)
         self.init_ui()
+
+    @Slot(asyncssh.SFTPName)
+    def display_new_file(self, entry: asyncssh.SFTPName):
+        filename = entry.filename
+        if filename in (".", ".."):
+            return
+        if self.mutex.tryLock():
+            item = QListWidgetItem(filename)
+            icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
+            item.setIcon(QApplication.style().standardIcon(icon))
+            self.display_file_list.addItem(item)
+            self.all_files_dict[filename] = item
+            self.mutex.unlock()
+
+    @Slot(str)
+    def del_sub_file(self, file: str):
+        if self.mutex.tryLock() and (file in self.all_files_dict):
+            item = self.all_files_dict[file]
+            row = self.display_file_list.row(item)
+            self.display_file_list.takeItem(row)
+            self.all_files_dict.pop(file)
+            self.mutex.unlock()
 
     def init_ui(self) -> None:
         """
@@ -644,6 +705,9 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.display_file_list.customContextMenuRequested.connect(self.show_context_menu)
         self.display_dir(".")
+        self.new_file_msg.connect(self.display_new_file)
+        self.sub_file_msg.connect(self.del_sub_file)
+        self.checker.start()
 
     def search_edit_value(self, text: str) -> None:
         """
@@ -845,7 +909,7 @@ class RemoteFileDisplay(QWidget):
 
         :param src: Path to the directory to display (default: current directory).
         """
-
+        self.mutex.lock()
         self.all_files_dict.clear()
         dir_names = []
         file_names = []
@@ -863,6 +927,7 @@ class RemoteFileDisplay(QWidget):
             item.setIcon(QApplication.style().standardIcon(icon))
         for item in dir_names + file_names:
             self.display_file_list.addItem(item)
+        self.mutex.unlock()
 
     def move_items(self) -> None:
         """
