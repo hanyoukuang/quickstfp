@@ -602,6 +602,8 @@ class CheckNewFile(QThread):
             now_file_list = self.session.read_dir(".")
             all_file_dict = self.remote_file_display.all_files_dict
             for entry in now_file_list:
+                if entry.filename in (".", ".."):
+                    continue
                 if entry.filename not in all_file_dict:
                     self.new_file_msg.emit(entry)
             self.mutex.unlock()
@@ -667,13 +669,18 @@ class RemoteFileDisplay(QWidget):
         item = QListWidgetItem(filename)
         icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
         item.setIcon(QApplication.style().standardIcon(icon))
-        self.display_file_list.addItem(item)
+        if entry.attrs.type == 2:
+            self.display_file_list.insertItem(0, item)
+        else:
+            self.display_file_list.addItem(item)
         self.all_files_dict[filename] = item
         self.mutex.unlock()
 
     @Slot(str)
     def del_sub_file(self, file: str):
         self.mutex.lock()
+        if file not in self.all_files_dict:
+            return
         item = self.all_files_dict[file]
         row = self.display_file_list.row(item)
         self.display_file_list.takeItem(row)
@@ -704,7 +711,6 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list.itemClicked.connect(self.item_clicked)
         self.display_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.display_file_list.customContextMenuRequested.connect(self.show_context_menu)
-        self.display_dir(".")
         self.new_file_msg.connect(self.display_new_file)
         self.sub_file_msg.connect(self.del_sub_file)
         self.checker.start()
@@ -822,7 +828,6 @@ class RemoteFileDisplay(QWidget):
         Refreshes the current directory display.
         """
         self.display_file_list.clear()
-        self.display_dir()
 
     def item_clicked(self, item: QListWidgetItem) -> None:
         """
@@ -839,10 +844,12 @@ class RemoteFileDisplay(QWidget):
         :param item: Double-clicked list widget item.
         """
         if not self.session.is_file(item.text()):
+            self.mutex.lock()
             self.session.change_dir(item.text())
             self.display_file_list.clear()
-            self.display_dir()
+            self.all_files_dict.clear()
             self.path_edit.setText(self.session.getcwd())
+            self.mutex.unlock()
             return
         src = item.text()
         edit = Edit(self.session, src, self.session.read_file(src))
@@ -902,32 +909,6 @@ class RemoteFileDisplay(QWidget):
         if ok:
             self.session.rename(item.text(), str(text))
             self.reload_dir()
-
-    def display_dir(self, src: str = ".") -> None:
-        """
-        Displays the contents of a specified directory.
-
-        :param src: Path to the directory to display (default: current directory).
-        """
-        self.mutex.lock()
-        self.all_files_dict.clear()
-        dir_names = []
-        file_names = []
-        for entry in self.session.read_dir(src):
-            if entry.filename in ('.', '..'):
-                continue
-            item = QListWidgetItem(entry.filename)
-            self.all_files_dict[entry.filename] = item
-            if entry.attrs.type == 2:
-                dir_names.append(item)
-                icon = QStyle.StandardPixmap.SP_DirIcon
-            else:
-                file_names.append(item)
-                icon = QStyle.StandardPixmap.SP_FileIcon
-            item.setIcon(QApplication.style().standardIcon(icon))
-        for item in dir_names + file_names:
-            self.display_file_list.addItem(item)
-        self.mutex.unlock()
 
     def move_items(self) -> None:
         """
