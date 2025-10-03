@@ -601,20 +601,25 @@ class CheckNewFile(QThread):
         if self.mutex.tryLock():
             now_file_list = self.session.read_dir(".")
             all_file_dict = self.remote_file_display.all_files_dict
+            new_files = []
             for entry in now_file_list:
                 if entry.filename in (".", ".."):
                     continue
                 if entry.filename not in all_file_dict:
-                    self.new_file_msg.emit(entry)
+                    new_files.append(entry)
+            self.new_file_msg.emit(new_files)
             self.mutex.unlock()
 
     def check_sub_file(self):
         if self.mutex.tryLock():
             now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
             all_file_dict = self.remote_file_display.all_files_dict
+            sub_files = []
             for file in all_file_dict:
                 if file not in now_file_list:
-                    self.sub_file_msg.emit(file)
+                    sub_files.append(file)
+            if sub_files:
+                self.sub_file_msg.emit(sub_files)
             self.mutex.unlock()
 
     def run(self):
@@ -630,8 +635,8 @@ class RemoteFileDisplay(QWidget):
     Remote file display interface, supporting file browsing, editing, deletion, moving, and copying.
     TODO: Add support for dragging files out.
     """
-    new_file_msg = Signal(asyncssh.SFTPName)
-    sub_file_msg = Signal(str)
+    new_file_msg = Signal(list)
+    sub_file_msg = Signal(list)
 
     def __init__(self, sftp_main_window: 'SFTPMainWindow') -> None:
         """
@@ -661,31 +666,33 @@ class RemoteFileDisplay(QWidget):
         self.setLayout(self.vbox)
         self.init_ui()
 
-    @Slot(asyncssh.SFTPName)
-    def display_new_file(self, entry: asyncssh.SFTPName):
-        filename = entry.filename
-        if filename in (".", ".."):
-            return
+    @Slot(list)
+    def display_new_file(self, new_files: list[asyncssh.SFTPName]):
         self.mutex.lock()
-        item = QListWidgetItem(filename)
-        icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
-        item.setIcon(QApplication.style().standardIcon(icon))
-        if entry.attrs.type == 2:
-            self.display_file_list.insertItem(0, item)
-        else:
-            self.display_file_list.addItem(item)
-        self.all_files_dict[filename] = item
+        for entry in new_files:
+            filename = entry.filename
+            if filename in (".", ".."):
+                return
+            item = QListWidgetItem(filename)
+            icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
+            item.setIcon(QApplication.style().standardIcon(icon))
+            if entry.attrs.type == 2:
+                self.display_file_list.insertItem(0, item)
+            else:
+                self.display_file_list.addItem(item)
+            self.all_files_dict[filename] = item
         self.mutex.unlock()
 
-    @Slot(str)
-    def del_sub_file(self, file: str):
-        if file not in self.all_files_dict:
-            return
-        item = self.all_files_dict[file]
-        row = self.display_file_list.row(item)
-        self.display_file_list.takeItem(row)
+    @Slot(list)
+    def del_sub_file(self, sub_files: list[str]):
         self.mutex.lock()
-        self.all_files_dict.pop(file)
+        for file in sub_files:
+            if file not in self.all_files_dict:
+                return
+            item = self.all_files_dict[file]
+            row = self.display_file_list.row(item)
+            self.display_file_list.takeItem(row)
+            self.all_files_dict.pop(file)
         self.mutex.unlock()
 
     def init_ui(self) -> None:
