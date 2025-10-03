@@ -620,8 +620,9 @@ class CheckNewFile(QThread):
     def run(self):
         while True:
             self.check_new_file()
+            time.sleep(0.3)
             self.check_sub_file()
-            time.sleep(3)
+            time.sleep(0.3)
 
 
 class RemoteFileDisplay(QWidget):
@@ -678,12 +679,12 @@ class RemoteFileDisplay(QWidget):
 
     @Slot(str)
     def del_sub_file(self, file: str):
-        self.mutex.lock()
         if file not in self.all_files_dict:
             return
         item = self.all_files_dict[file]
         row = self.display_file_list.row(item)
         self.display_file_list.takeItem(row)
+        self.mutex.lock()
         self.all_files_dict.pop(file)
         self.mutex.unlock()
 
