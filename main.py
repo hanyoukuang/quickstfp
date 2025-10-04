@@ -399,7 +399,6 @@ class SFTPSession(QThread):
         Runs the async event loop for the SFTP session.
         """
         self.loop.run_forever()
-        self.deleteLater()
 
     def getcwd(self) -> str:
         """
@@ -672,7 +671,7 @@ class RemoteFileDisplay(QWidget):
         for entry in new_files:
             filename = entry.filename
             if filename in (".", ".."):
-                return
+                continue
             item = QListWidgetItem(filename)
             icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
             item.setIcon(QApplication.style().standardIcon(icon))
@@ -688,7 +687,7 @@ class RemoteFileDisplay(QWidget):
         self.mutex.lock()
         for file in sub_files:
             if file not in self.all_files_dict:
-                return
+                continue
             item = self.all_files_dict[file]
             row = self.display_file_list.row(item)
             self.display_file_list.takeItem(row)
