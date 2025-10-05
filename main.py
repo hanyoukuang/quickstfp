@@ -336,32 +336,32 @@ class CheckNewFile(QThread):
         self.mutex = self.remote_file_display.mutex
 
     def check_new_file(self):
-        self.mutex.lock()
-        now_file_list = self.session.read_dir(".")
-        all_file_dict = self.remote_file_display.all_files_dict
-        new_files = []
-        for entry in now_file_list:
-            if entry.filename in (".", ".."):
-                continue
-            if entry.filename not in all_file_dict:
-                new_files.append(entry)
-        if new_files:
-            self.new_file_msg.emit(new_files)
-        else:
-            self.mutex.unlock()
+        if self.mutex.try_lock():
+            now_file_list = self.session.read_dir(".")
+            all_file_dict = self.remote_file_display.all_files_dict
+            new_files = []
+            for entry in now_file_list:
+                if entry.filename in (".", ".."):
+                    continue
+                if entry.filename not in all_file_dict:
+                    new_files.append(entry)
+            if new_files:
+                self.new_file_msg.emit(new_files)
+            else:
+                self.mutex.unlock()
 
     def check_sub_file(self):
-        self.mutex.lock()
-        now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
-        all_file_dict = self.remote_file_display.all_files_dict
-        sub_files = []
-        for file in all_file_dict:
-            if file not in now_file_list:
-                sub_files.append(file)
-        if sub_files:
-            self.sub_file_msg.emit(sub_files)
-        else:
-            self.mutex.unlock()
+        if self.mutex.try_lock():
+            now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
+            all_file_dict = self.remote_file_display.all_files_dict
+            sub_files = []
+            for file in all_file_dict:
+                if file not in now_file_list:
+                    sub_files.append(file)
+            if sub_files:
+                self.sub_file_msg.emit(sub_files)
+            else:
+                self.mutex.unlock()
 
     def run(self):
         while True:
@@ -397,7 +397,6 @@ class RemoteFileDisplay(QWidget):
         self.select_item = None
         self.setLayout(self.vbox)
         self.init_ui()
-        self.add_idx = 0
 
     @Slot(list)
     def display_new_file(self, new_files: list[asyncssh.SFTPName]):
