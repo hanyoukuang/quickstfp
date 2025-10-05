@@ -333,42 +333,35 @@ class CheckNewFile(QThread):
         self.new_file_msg = self.remote_file_display.new_file_msg
         self.sub_file_msg = self.remote_file_display.sub_file_msg
         self.session = self.remote_file_display.session
-        self.mutex = self.remote_file_display.mutex
 
     def check_new_file(self):
-        if self.mutex.try_lock():
-            now_file_list = self.session.read_dir(".")
-            all_file_dict = self.remote_file_display.all_files_dict
-            new_files = []
-            for entry in now_file_list:
-                if entry.filename in (".", ".."):
-                    continue
-                if entry.filename not in all_file_dict:
-                    new_files.append(entry)
-            if new_files:
-                self.new_file_msg.emit(new_files)
-            else:
-                self.mutex.unlock()
+        now_file_list = self.session.read_dir(".")
+        all_file_dict = self.remote_file_display.all_files_dict
+        new_files = []
+        for entry in now_file_list:
+            if entry.filename in (".", ".."):
+                continue
+            if entry.filename not in all_file_dict:
+                new_files.append(entry)
+        if new_files:
+            self.new_file_msg.emit(new_files)
 
     def check_sub_file(self):
-        if self.mutex.try_lock():
-            now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
-            all_file_dict = self.remote_file_display.all_files_dict
-            sub_files = []
-            for file in all_file_dict:
-                if file not in now_file_list:
-                    sub_files.append(file)
-            if sub_files:
-                self.sub_file_msg.emit(sub_files)
-            else:
-                self.mutex.unlock()
+        now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
+        all_file_dict = self.remote_file_display.all_files_dict
+        sub_files = []
+        for file in all_file_dict:
+            if file not in now_file_list:
+                sub_files.append(file)
+        if sub_files:
+            self.sub_file_msg.emit(sub_files)
 
     def run(self):
         while True:
             self.check_new_file()
-            time.sleep(0.3)
+            time.sleep(0.5)
             self.check_sub_file()
-            time.sleep(0.3)
+            time.sleep(0.5)
 
 
 class RemoteFileDisplay(QWidget):
@@ -380,7 +373,6 @@ class RemoteFileDisplay(QWidget):
         self.sftp_main_window = sftp_main_window
         self.session = sftp_main_window.session
         self.main_window_path = self.session.getcwd()
-        self.mutex = QMutex()
         self.move_paths = []  # Paths to move
         self.copy_paths = []  # Paths to copy
         self.edits = []
@@ -397,6 +389,8 @@ class RemoteFileDisplay(QWidget):
         self.select_item = None
         self.setLayout(self.vbox)
         self.init_ui()
+        self.file_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self.dir_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
 
     @Slot(list)
     def display_new_file(self, new_files: list[asyncssh.SFTPName]):
@@ -405,14 +399,13 @@ class RemoteFileDisplay(QWidget):
             if filename in self.all_files_dict:
                 continue
             item = QListWidgetItem(filename)
-            icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
-            item.setIcon(QApplication.style().standardIcon(icon))
             if entry.attrs.type == 2:
+                item.setIcon(self.dir_icon)
                 self.display_file_list.insertItem(0, item)
             else:
+                item.setIcon(self.file_icon)
                 self.display_file_list.addItem(item)
             self.all_files_dict[filename] = item
-        self.mutex.unlock()
 
     @Slot(list)
     def del_sub_file(self, sub_files: list[str]):
@@ -423,7 +416,6 @@ class RemoteFileDisplay(QWidget):
             row = self.display_file_list.row(item)
             self.display_file_list.takeItem(row)
             self.all_files_dict.pop(file)
-        self.mutex.unlock()
 
     def init_ui(self) -> None:
         self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -471,10 +463,8 @@ class RemoteFileDisplay(QWidget):
         self.session.change_dir(self.main_window_path)
 
     def refresh(self):
-        self.mutex.lock()
         self.display_file_list.clear()
         self.all_files_dict.clear()
-        self.mutex.unlock()
 
     def show_context_menu(self, pos: QPoint) -> None:
         item = self.display_file_list.itemAt(pos)
@@ -531,10 +521,8 @@ class RemoteFileDisplay(QWidget):
 
     def double_item_clicked(self, item: QListWidgetItem) -> None:
         if not self.session.is_file(item.text()):
-            self.mutex.lock()
             self.session.change_dir(item.text())
             self.path_edit.setText(self.session.getcwd())
-            self.mutex.unlock()
             return
         src = item.text()
         edit = Edit(self.session, src, self.session.read_file(src))
