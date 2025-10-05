@@ -345,8 +345,10 @@ class CheckNewFile(QThread):
                 continue
             if entry.filename not in all_file_dict:
                 new_files.append(entry)
-        self.new_file_msg.emit(new_files)
-        self.mutex.unlock()
+        if new_files:
+            self.new_file_msg.emit(new_files)
+        else:
+            self.mutex.unlock()
 
     def check_sub_file(self):
         self.mutex.lock()
@@ -358,7 +360,8 @@ class CheckNewFile(QThread):
                 sub_files.append(file)
         if sub_files:
             self.sub_file_msg.emit(sub_files)
-        self.mutex.unlock()
+        else:
+            self.mutex.unlock()
 
     def run(self):
         while True:
@@ -394,13 +397,13 @@ class RemoteFileDisplay(QWidget):
         self.select_item = None
         self.setLayout(self.vbox)
         self.init_ui()
+        self.add_idx = 0
 
     @Slot(list)
     def display_new_file(self, new_files: list[asyncssh.SFTPName]):
-        self.mutex.lock()
         for entry in new_files:
             filename = entry.filename
-            if filename in (".", ".."):
+            if filename in self.all_files_dict:
                 continue
             item = QListWidgetItem(filename)
             icon = QStyle.StandardPixmap.SP_DirIcon if entry.attrs.type == 2 else QStyle.StandardPixmap.SP_FileIcon
@@ -414,7 +417,6 @@ class RemoteFileDisplay(QWidget):
 
     @Slot(list)
     def del_sub_file(self, sub_files: list[str]):
-        self.mutex.lock()
         for file in sub_files:
             if file not in self.all_files_dict:
                 continue
@@ -425,9 +427,6 @@ class RemoteFileDisplay(QWidget):
         self.mutex.unlock()
 
     def init_ui(self) -> None:
-        """
-        Initializes the UI layout and event bindings for the file display.
-        """
         self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.setAcceptDrops(True)  # Enable drag-and-drop support
         self.search_edit.textChanged.connect(self.search_edit_value)
