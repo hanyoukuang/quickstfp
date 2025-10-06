@@ -105,7 +105,7 @@ class Transport(QThread):
         self.transport_fail_file = []
         self.now_progress_bar = 0
         self.pbar = pbar
-        self.msg = session.msg
+        self.update_msg = session.update_msg
         self.pbar_msg = session.pbar_msg
         self.err_msg = session.err_msg
 
@@ -143,7 +143,7 @@ class DownloadTransport(Transport):
 
         def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
             nonlocal last_size
-            self.msg.emit(self.pbar, self.now_progress_bar + now_size - last_size)
+            self.update_msg.emit(self.pbar, self.now_progress_bar + now_size - last_size)
             self.now_progress_bar += now_size - last_size
             last_size = now_size
 
@@ -151,7 +151,7 @@ class DownloadTransport(Transport):
             await self.sftp.get(src, loc, progress_handler=update)
         except (OSError, asyncssh.SFTPError):
             all_size = await self.sftp.getsize(src)
-            self.msg.emit(self.pbar, self.now_progress_bar + all_size - last_size)
+            self.update_msg.emit(self.pbar, self.now_progress_bar + all_size - last_size)
             self.now_progress_bar += all_size - last_size
             self.transport_fail_file.append(src + "\n")
 
@@ -184,7 +184,7 @@ class DownloadTransport(Transport):
             all_size = await self.sftp.getsize(src)
             self.pbar_msg.emit(self.pbar, all_size)
             await self._transport_file(src, loc)
-        self.msg.emit(self.pbar, all_size)
+        self.update_msg.emit(self.pbar, all_size)
 
 
 class UploadTransport(Transport):
@@ -197,7 +197,7 @@ class UploadTransport(Transport):
 
         def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
             nonlocal last_size
-            self.msg.emit(self.pbar, self.now_progress_bar + now_size - last_size)
+            self.update_msg.emit(self.pbar, self.now_progress_bar + now_size - last_size)
             self.now_progress_bar += now_size - last_size
             last_size = now_size
 
@@ -205,7 +205,7 @@ class UploadTransport(Transport):
             await self.sftp.put(src, loc, progress_handler=update)
         except (OSError, asyncssh.SFTPError):
             all_size = os.path.getsize(src)
-            self.msg.emit(self.pbar, self.now_progress_bar + all_size - last_size)
+            self.update_msg.emit(self.pbar, self.now_progress_bar + all_size - last_size)
             self.now_progress_bar += all_size - last_size
             self.transport_fail_file.append(src + "\n")
 
@@ -234,11 +234,11 @@ class UploadTransport(Transport):
             all_size = os.path.getsize(src)
             self.pbar_msg.emit(self.pbar, all_size)
             await self._transport_file(src, loc)
-        self.msg.emit(self.pbar, all_size)
+        self.update_msg.emit(self.pbar, all_size)
 
 
 class SFTPSession(QThread):
-    msg = Signal(int, int)  # Signal for progress bar updates
+    update_msg = Signal(int, int)  # Signal for progress bar updates
     pbar_msg = Signal(int, int)  # Signal for progress bar initialization
     err_msg = Signal(str)  # Signal for error messages
 
@@ -333,28 +333,35 @@ class CheckNewFile(QThread):
         self.new_file_msg = self.remote_file_display.new_file_msg
         self.sub_file_msg = self.remote_file_display.sub_file_msg
         self.session = self.remote_file_display.session
+        self.mutex = self.remote_file_display.mutex
 
     def check_new_file(self):
-        now_file_list = self.session.read_dir(".")
-        all_file_dict = self.remote_file_display.all_files_dict
-        new_files = []
-        for entry in now_file_list:
-            if entry.filename in (".", ".."):
-                continue
-            if entry.filename not in all_file_dict:
-                new_files.append(entry)
-        if new_files:
-            self.new_file_msg.emit(new_files)
+        if self.mutex.tryLock():
+            now_file_list = self.session.read_dir(".")
+            all_file_dict = self.remote_file_display.all_files_dict
+            new_files = []
+            for entry in now_file_list:
+                if entry.filename in (".", ".."):
+                    continue
+                if entry.filename not in all_file_dict:
+                    new_files.append(entry)
+            if new_files:
+                self.new_file_msg.emit(new_files)
+            else:
+                self.mutex.unlock()
 
     def check_sub_file(self):
-        now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
-        all_file_dict = self.remote_file_display.all_files_dict
-        sub_files = []
-        for file in all_file_dict:
-            if file not in now_file_list:
-                sub_files.append(file)
-        if sub_files:
-            self.sub_file_msg.emit(sub_files)
+        if self.mutex.tryLock():
+            now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
+            all_file_dict = self.remote_file_display.all_files_dict
+            sub_files = []
+            for file in all_file_dict:
+                if file not in now_file_list:
+                    sub_files.append(file)
+            if sub_files:
+                self.sub_file_msg.emit(sub_files)
+            else:
+                self.mutex.unlock()
 
     def run(self):
         while True:
@@ -376,6 +383,7 @@ class RemoteFileDisplay(QWidget):
         self.move_paths = []  # Paths to move
         self.copy_paths = []  # Paths to copy
         self.edits = []
+        self.mutex = QMutex()
         self.all_files_dict: dict[str, QListWidgetItem] = dict()
         self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
@@ -406,6 +414,7 @@ class RemoteFileDisplay(QWidget):
                 item.setIcon(self.file_icon)
                 self.display_file_list.addItem(item)
             self.all_files_dict[filename] = item
+        self.mutex.unlock()
 
     @Slot(list)
     def del_sub_file(self, sub_files: list[str]):
@@ -416,6 +425,7 @@ class RemoteFileDisplay(QWidget):
             row = self.display_file_list.row(item)
             self.display_file_list.takeItem(row)
             self.all_files_dict.pop(file)
+        self.mutex.unlock()
 
     def init_ui(self) -> None:
         self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -463,8 +473,10 @@ class RemoteFileDisplay(QWidget):
         self.session.change_dir(self.main_window_path)
 
     def refresh(self):
+        self.mutex.lock()
         self.display_file_list.clear()
         self.all_files_dict.clear()
+        self.mutex.unlock()
 
     def show_context_menu(self, pos: QPoint) -> None:
         item = self.display_file_list.itemAt(pos)
@@ -521,8 +533,10 @@ class RemoteFileDisplay(QWidget):
 
     def double_item_clicked(self, item: QListWidgetItem) -> None:
         if not self.session.is_file(item.text()):
+            self.mutex.lock()
             self.session.change_dir(item.text())
             self.path_edit.setText(self.session.getcwd())
+            self.mutex.unlock()
             return
         src = item.text()
         edit = Edit(self.session, src, self.session.read_file(src))
@@ -737,7 +751,7 @@ class SFTPMainWindow(QWidget):
         self.username = username
         self.password = password
         self.session = SFTPSession(host, port, username, password)
-        self.session.msg.connect(self.update_progress)
+        self.session.update_msg.connect(self.update_progress)
         self.session.pbar_msg.connect(self.set_progress)
         self.session.err_msg.connect(self.display_error)
         self.session.start()
@@ -753,6 +767,8 @@ class SFTPMainWindow(QWidget):
         self.splitter_control_transport = QSplitter(Qt.Orientation.Horizontal)
         self.pbars = []
         self.init_ui()
+        self.file_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self.dir_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
 
     def init_ui(self) -> None:
         self.setWindowTitle("SFTP Session")
@@ -766,14 +782,14 @@ class SFTPMainWindow(QWidget):
         self.stacked_widget.addWidget(self.password_control)  # 2: Password management
 
     def add_pbar(self, src: str, transport_type: str) -> int:
-        icon = QStyle.StandardPixmap.SP_FileIcon if self.session.is_file(src) else QStyle.StandardPixmap.SP_DirIcon
+        icon = self.file_icon if self.session.is_file(src) else self.dir_icon
         pbar = QProgressBar()
         item = QListWidgetItem(self.display_pbar_list)
         item_widget = QWidget()
         layout = QHBoxLayout(item_widget)
         text_label = QLabel(f"{transport_type}: {src}")
         picture_label = QLabel()
-        picture_label.setPixmap(QApplication.style().standardIcon(icon).pixmap(16, 16))
+        picture_label.setPixmap(icon.pixmap(16, 16))
         layout.addWidget(picture_label)
         layout.addWidget(text_label)
         layout.addWidget(pbar)
