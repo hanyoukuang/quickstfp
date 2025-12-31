@@ -1,12 +1,11 @@
 import os
 import sys
 import asyncio
-import time
 from typing import Sequence
 import asyncssh
 import asyncio_pool
 from PySide6.QtGui import QAction, QDropEvent, QDragEnterEvent, QCloseEvent
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex, QMutex
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QPoint, QModelIndex
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QProgressBar, QLineEdit, QLabel, QPushButton, QStyle, QListWidget,
@@ -92,7 +91,7 @@ class Edit(QWidget):
             self.session.save_file(self.src, now_text)
 
 
-class Transport(QThread):
+class Transport:
     def __init__(self, src: str, loc: str, co_num: int, session: 'SFTPSession', pbar: int) -> None:
         super().__init__()
         self.src = src
@@ -108,6 +107,7 @@ class Transport(QThread):
         self.update_msg = session.update_msg
         self.pbar_msg = session.pbar_msg
         self.err_msg = session.err_msg
+        self.stop_flag = False
 
     async def start_core(self):
         self.task_core.sort(key=lambda item: item[0], reverse=True)
@@ -115,11 +115,11 @@ class Transport(QThread):
         r = len(self.task_core) - 1
         async with asyncio_pool.AioPool(self.co_num, loop=self.loop) as pool:
             for l in range(0, r + 1):
-                if r <= l + 1:
+                if r <= l + 1 and (self.stop_flag is not True):
                     break
                 self.task_core[l] = await pool.spawn(self.task_core[l])
                 for idx in reversed(range(l + 1, r + 1)):
-                    if self.task_core[l].done():
+                    if self.task_core[l].done() or self.stop_flag:
                         break
                     self.task_core[idx] = await pool.spawn(self.task_core[idx])
                     r = idx
@@ -127,11 +127,10 @@ class Transport(QThread):
     async def transport(self):
         pass
 
-    def run(self):
-        _ = asyncio.run_coroutine_threadsafe(self.transport(), self.loop).result()
+    def start(self):
+        asyncio.run_coroutine_threadsafe(self.transport(), self.loop)
         err_src_str = "".join(self.transport_fail_file)
         self.err_msg.emit(err_src_str)
-        self.deleteLater()
 
 
 class DownloadTransport(Transport):
@@ -326,18 +325,18 @@ class SFTPSession(QThread):
         self.run_command(f"cp -r {src} {dst}")
 
 
-class CheckNewFile(QThread):
+class CheckFileDynamically:
     def __init__(self, remote_file_display: 'RemoteFileDisplay'):
         super().__init__()
         self.remote_file_display = remote_file_display
         self.new_file_msg = self.remote_file_display.new_file_msg
         self.sub_file_msg = self.remote_file_display.sub_file_msg
-        self.session = self.remote_file_display.session
-        self.mutex = self.remote_file_display.mutex
+        self.sftp = self.remote_file_display.session.sftp
+        self.loop = self.remote_file_display.session.loop
 
-    def check_new_file(self):
-        if self.mutex.tryLock():
-            now_file_list = self.session.read_dir(".")
+    async def check_file_new(self):
+        while True:
+            now_file_list = await self.sftp.readdir(".")
             all_file_dict = self.remote_file_display.all_files_dict
             new_files = []
             for entry in now_file_list:
@@ -347,12 +346,11 @@ class CheckNewFile(QThread):
                     new_files.append(entry)
             if new_files:
                 self.new_file_msg.emit(new_files)
-            else:
-                self.mutex.unlock()
+            await asyncio.sleep(0.5)
 
-    def check_sub_file(self):
-        if self.mutex.tryLock():
-            now_file_list = set([entry.filename for entry in self.session.read_dir(".")])
+    async def check_file_old(self):
+        while True:
+            now_file_list = set([entry.filename async for entry in self.sftp.scandir(".")])
             all_file_dict = self.remote_file_display.all_files_dict
             sub_files = []
             for file in all_file_dict:
@@ -360,15 +358,10 @@ class CheckNewFile(QThread):
                     sub_files.append(file)
             if sub_files:
                 self.sub_file_msg.emit(sub_files)
-            else:
-                self.mutex.unlock()
+            await asyncio.sleep(0.5)
 
     def run(self):
-        while True:
-            self.check_new_file()
-            time.sleep(0.5)
-            self.check_sub_file()
-            time.sleep(0.5)
+        asyncio.gather(self.check_file_new(), self.check_file_old(), loop=self.loop)
 
 
 class RemoteFileDisplay(QWidget):
@@ -383,7 +376,6 @@ class RemoteFileDisplay(QWidget):
         self.move_paths = []  # Paths to move
         self.copy_paths = []  # Paths to copy
         self.edits = []
-        self.mutex = QMutex()
         self.all_files_dict: dict[str, QListWidgetItem] = dict()
         self.back_button = QPushButton("返回上层目录")
         self.select_button = QPushButton("选择")
@@ -393,7 +385,7 @@ class RemoteFileDisplay(QWidget):
         self.vbox = QVBoxLayout()
         self.tool_hbox = QHBoxLayout()
         self.display_file_list = QListWidget()
-        self.checker = CheckNewFile(self)
+        self.checker = CheckFileDynamically(self)
         self.select_item = None
         self.setLayout(self.vbox)
         self.init_ui()
@@ -414,7 +406,6 @@ class RemoteFileDisplay(QWidget):
                 item.setIcon(self.file_icon)
                 self.display_file_list.addItem(item)
             self.all_files_dict[filename] = item
-        self.mutex.unlock()
 
     @Slot(list)
     def del_sub_file(self, sub_files: list[str]):
@@ -425,7 +416,6 @@ class RemoteFileDisplay(QWidget):
             row = self.display_file_list.row(item)
             self.display_file_list.takeItem(row)
             self.all_files_dict.pop(file)
-        self.mutex.unlock()
 
     def init_ui(self) -> None:
         self.display_file_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -450,7 +440,7 @@ class RemoteFileDisplay(QWidget):
         self.display_file_list.customContextMenuRequested.connect(self.show_context_menu)
         self.new_file_msg.connect(self.display_new_file)
         self.sub_file_msg.connect(self.del_sub_file)
-        self.checker.start()
+        self.checker.run()
 
     def search_edit_value(self, text: str) -> None:
         if not text:
@@ -466,6 +456,7 @@ class RemoteFileDisplay(QWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         for url in event.mimeData().urls():
+            os.makedirs("tmp", exist_ok=True)
             self.sftp_main_window.upload(url.toLocalFile(), self.session.getcwd(), 10)
         event.acceptProposedAction()
 
@@ -473,10 +464,8 @@ class RemoteFileDisplay(QWidget):
         self.session.change_dir(self.main_window_path)
 
     def refresh(self):
-        self.mutex.lock()
         self.display_file_list.clear()
         self.all_files_dict.clear()
-        self.mutex.unlock()
 
     def show_context_menu(self, pos: QPoint) -> None:
         item = self.display_file_list.itemAt(pos)
@@ -512,6 +501,7 @@ class RemoteFileDisplay(QWidget):
             self.download_item(item)
 
     def download_item(self, item: QListWidgetItem) -> None:
+        os.makedirs("tmp", exist_ok=True)
         self.sftp_main_window.download(self.realpath(item.text()), "./tmp", 10)
 
     def paste_items(self) -> None:
@@ -533,10 +523,8 @@ class RemoteFileDisplay(QWidget):
 
     def double_item_clicked(self, item: QListWidgetItem) -> None:
         if not self.session.is_file(item.text()):
-            self.mutex.lock()
             self.session.change_dir(item.text())
             self.path_edit.setText(self.session.getcwd())
-            self.mutex.unlock()
             return
         src = item.text()
         edit = Edit(self.session, src, self.session.read_file(src))
@@ -923,7 +911,6 @@ class UserMainWindow(QMainWindow):
 
 
 if __name__ == '__main__':
-    os.makedirs("tmp", exist_ok=True)
     app = QApplication(sys.argv)
     setup_theme("auto")
     us = UserMainWindow()
