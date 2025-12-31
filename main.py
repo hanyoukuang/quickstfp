@@ -107,7 +107,6 @@ class Transport:
         self.update_msg = session.update_msg
         self.pbar_msg = session.pbar_msg
         self.err_msg = session.err_msg
-        self.stop_flag = False
 
     async def start_core(self):
         self.task_core.sort(key=lambda item: item[0], reverse=True)
@@ -115,11 +114,11 @@ class Transport:
         r = len(self.task_core) - 1
         async with asyncio_pool.AioPool(self.co_num, loop=self.loop) as pool:
             for l in range(0, r + 1):
-                if r <= l + 1 and (self.stop_flag is not True):
+                if r <= l + 1:
                     break
                 self.task_core[l] = await pool.spawn(self.task_core[l])
                 for idx in reversed(range(l + 1, r + 1)):
-                    if self.task_core[l].done() or self.stop_flag:
+                    if self.task_core[l].done():
                         break
                     self.task_core[idx] = await pool.spawn(self.task_core[idx])
                     r = idx
@@ -127,10 +126,13 @@ class Transport:
     async def transport(self):
         pass
 
-    def start(self):
-        asyncio.run_coroutine_threadsafe(self.transport(), self.loop)
+    def send_err(self, _future: asyncio.Future):
         err_src_str = "".join(self.transport_fail_file)
         self.err_msg.emit(err_src_str)
+
+    def start(self):
+        future = asyncio.run_coroutine_threadsafe(self.transport(), self.loop)
+        future.add_done_callback(self.send_err)
 
 
 class DownloadTransport(Transport):
@@ -174,16 +176,19 @@ class DownloadTransport(Transport):
         return total
 
     async def transport(self) -> None:
-        src, loc = path_stand(self.src, self.loc)
-        if await self.sftp.isdir(src):
-            all_size = await self._transport_dir_init(src, loc)
-            self.pbar_msg.emit(self.pbar, all_size)
-            await self.start_core()
-        else:
-            all_size = await self.sftp.getsize(src)
-            self.pbar_msg.emit(self.pbar, all_size)
-            await self._transport_file(src, loc)
-        self.update_msg.emit(self.pbar, all_size)
+        try:
+            src, loc = path_stand(self.src, self.loc)
+            if await self.sftp.isdir(src):
+                all_size = await self._transport_dir_init(src, loc)
+                self.pbar_msg.emit(self.pbar, all_size)
+                await self.start_core()
+            else:
+                all_size = await self.sftp.getsize(src)
+                self.pbar_msg.emit(self.pbar, all_size)
+                await self._transport_file(src, loc)
+            self.update_msg.emit(self.pbar, all_size)
+        except asyncio.CancelledError:
+            pass
 
 
 class UploadTransport(Transport):
@@ -222,18 +227,21 @@ class UploadTransport(Transport):
         return total_size
 
     async def transport(self) -> None:
-        src, loc = path_stand(self.src, self.loc)
-        if os.path.isdir(src):
-            all_size = self._transport_dir_init(src, loc)
-            self.pbar_msg.emit(self.pbar, all_size)
-            for future in asyncio.as_completed(self.task_list_mkdir):
-                await future
-            await self.start_core()
-        else:
-            all_size = os.path.getsize(src)
-            self.pbar_msg.emit(self.pbar, all_size)
-            await self._transport_file(src, loc)
-        self.update_msg.emit(self.pbar, all_size)
+        try:
+            src, loc = path_stand(self.src, self.loc)
+            if os.path.isdir(src):
+                all_size = self._transport_dir_init(src, loc)
+                self.pbar_msg.emit(self.pbar, all_size)
+                for future in asyncio.as_completed(self.task_list_mkdir):
+                    await future
+                await self.start_core()
+            else:
+                all_size = os.path.getsize(src)
+                self.pbar_msg.emit(self.pbar, all_size)
+                await self._transport_file(src, loc)
+            self.update_msg.emit(self.pbar, all_size)
+        except asyncio.CancelledError:
+            pass
 
 
 class SFTPSession(QThread):
@@ -247,8 +255,7 @@ class SFTPSession(QThread):
         self.port = port
         self.username = username
         self.password = password
-        self.transport = []  # Stores transfer tasks
-        self.loop = asyncio.new_event_loop()  # Creates async event loop
+        self.loop = asyncio.new_event_loop()
         self.ssh = self.loop.run_until_complete(
             asyncssh.connect(host=host, port=port, username=username, password=password, known_hosts=None))
         self.sftp = self.loop.run_until_complete(self.ssh.start_sftp_client())
@@ -299,12 +306,10 @@ class SFTPSession(QThread):
     def download(self, src: str, loc: str, co_num: int, pbar: int) -> None:
         dt = DownloadTransport(src, loc, co_num, self, pbar)
         dt.start()
-        self.transport.append(dt)
 
     def upload(self, src: str, loc: str, co_num: int, pbar: int) -> None:
         ut = UploadTransport(src, loc, co_num, self, pbar)
         ut.start()
-        self.transport.append(ut)
 
     async def remove_dir(self, src: str) -> None:
         await self.ssh.run(f"rm -rf {src}")
