@@ -49,9 +49,3 @@ class UserInfoData:
     def del_idx(self, idx: int):
         self.cursor.execute('DELETE FROM Host WHERE id = ?', (idx,))
         self.conn.commit()
-
-
-if __name__ == '__main__':
-    userinfo = UserInfoData()
-    userinfo.insert('localhost', 5432, 'admin', 'admin')
-    print(userinfo.query_all())
