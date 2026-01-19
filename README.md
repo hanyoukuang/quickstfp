@@ -1,14 +1,12 @@
 # quickstfp
-一个高并发的sftp库，可以用更少的资源、更快的速度下载或上传文件（文件夹也可）。利用asyncio，asyncssh打造
-其中注释部分由grok书写
-项目使用uv管理
+是一个具备ssh伪终端与sftp图形化界面的简单工具。
+它封装了asyncssh的部分函数，使用pyside6显示GUI
+支持Window, Mac, Linux主流操作系统
+
+## 使用指南：
+1. 首先你得安装一个python解释器
+2. 打开终端输入
 ```
-pip install pyside6
-pip install pyqtdarktheme # 3.7 <= python version <= 3.11
-pip install pyqtdarktheme2 # python version >= 3.12
-pip install asyncssh
-pip install asyncio-pool
-pip install uvloop    # liux macos unix
-pip install winuvloop #windows
-python3 main.py
+pip install asyncssh pyside6
+python3 main_window.py
 ```
