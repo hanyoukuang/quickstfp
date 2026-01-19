@@ -451,7 +451,7 @@ class UserSelectPutTargetWidget(UserSelectTargetWidget):
     def get_local_dir(self):
         file_path = QFileDialog.getExistingDirectory(self, "Open directory")
         if file_path:
-            self.dst_edit.setText(file_path)
+            self.src_edit.setText(file_path)
 
     def start_put(self):
         if self.src_edit.text() and self.dst_edit.text():
