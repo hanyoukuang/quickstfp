@@ -8,5 +8,5 @@
 2. 打开终端输入
 ```
 pip install asyncssh pyside6
-python3 main_window.py
+python3 main.py
 ```
