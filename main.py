@@ -451,7 +451,7 @@ class UserSelectPutTargetWidget(UserSelectTargetWidget):
     def get_local_dir(self):
         file_path = QFileDialog.getExistingDirectory(self, "Open directory")
         if file_path:
-            self.src_edit.setText(file_path)
+            self.dst_edit.setText(file_path)
 
     def start_put(self):
         if self.src_edit.text() and self.dst_edit.text():
@@ -525,26 +525,40 @@ class TransportControlWidget(QListWidget):
         self.FILE_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         self.info = sftp_tab_widget.info
+        self.task_list = []
+
+    def clear_finish_task(self):
+        tmp_list = []
+        for task in self.task_list:
+            if task.is_cancel:
+                tmp_list.append(task)
+        self.task_list = tmp_list
 
     def get(self, src: str, dst: str, coro_num: int):
+        self.clear_finish_task()
         icon = self.FILE_ICON if self.info.is_file(src) else self.DIR_ICON
         pbar = ProgressBar(src, "下载", icon)
         item = QListWidgetItem(self)
         item.setSizeHint(pbar.sizeHint())
         self.setItemWidget(item, pbar)
         self.addItem(item)
-        pbar.del_widget_msg.connect(lambda: self.removeItemWidget(item))
-        GET(src, dst, coro_num, self.info, pbar)()
+        pbar.del_widget_msg.connect(lambda: self.takeItem(self.row(item)))
+        task = GET(src, dst, coro_num, self.info, pbar)
+        self.task_list.append(task)
+        task()
 
     def put(self, src: str, dst: str, coro_num: int):
+        self.clear_finish_task()
         icon = self.FILE_ICON if os.path.isfile(src) else self.DIR_ICON
         pbar = ProgressBar(src, "上传", icon)
         item = QListWidgetItem(self)
         item.setSizeHint(pbar.sizeHint())
         self.setItemWidget(item, pbar)
         self.addItem(item)
-        pbar.del_widget_msg.connect(lambda: self.removeItemWidget(item))
-        PUT(src, dst, coro_num, self.info, pbar)()
+        pbar.del_widget_msg.connect(lambda: self.takeItem(self.row(item)))
+        task = PUT(src, dst, coro_num, self.info, pbar)
+        self.task_list.append(task)
+        task()
 
 
 class SFTPTabWidget(QWidget):
