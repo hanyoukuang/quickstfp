@@ -88,14 +88,9 @@ class UserInfoDB:
     # ==========================================
 
     def query_password(self, host: str, port: int, username: str, password: str) -> List[Tuple]:
-        """查询时，对比所有的解密数据（因为相同密码每次加密生成的密文不同，不能直接在 SQL 里对比）"""
-        all_records = self.query_all_password()
-        result = []
-        for row in all_records:
-            # row 的格式为 (id, host, port, username, 解密后的password)
-            if row[1] == host and row[2] == port and row[3] == username and row[4] == password:
-                result.append(row)
-        return result
+        """查询时，对比所有的解密数据"""
+        return [row for row in self.query_all_password()
+                if row[1] == host and row[2] == port and row[3] == username and row[4] == password]
 
     def insert_password(self, host: str, port: int, username: str, password: str) -> None:
         """
@@ -142,12 +137,9 @@ class UserInfoDB:
 
     def query_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> List[Tuple]:
         """查询秘钥数据"""
-        all_records = self.query_all_key()
-        result = []
-        for row in all_records:
-            if row[1] == host and row[2] == port and row[3] == username and row[4] == key_path and row[5] == passphrase:
-                result.append(row)
-        return result
+        return [row for row in self.query_all_key()
+                if row[1] == host and row[2] == port and row[3] == username and row[4] == key_path and row[
+                    5] == passphrase]
 
     def insert_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> None:
         """
