@@ -99,6 +99,28 @@ class ImmediateSchedulerPool:
         self._all_done_event.set()
 
 
+class ProgressTracker:
+    """独立的进度追踪器，用于替代原来臃肿的嵌套闭包"""
+
+    def __init__(self, transport_instance: 'Transport'):
+        self.transport = transport_instance
+        self.last_size = 0
+
+    def __call__(self, _src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
+        """被 asyncssh 调用，更新传输进度"""
+        delta = now_size - self.last_size
+        self.transport._total_progress_size += delta
+        self.transport.progress_updated.emit(self.transport._total_progress_size)
+        self.last_size = now_size
+
+    def handle_fail(self, all_size: int, src: str) -> None:
+        """发生异常时调用，补齐因失败丢失的进度条长度，并记录失败文件"""
+        delta = all_size - self.last_size
+        self.transport._total_progress_size += delta
+        self.transport.progress_updated.emit(self.transport._total_progress_size)
+        self.transport.transport_fail_filename += f"{src}\n"
+
+
 class Transport(QObject):
     """
     基础传输核心类。完全脱离 UI 控件依赖，仅通过信号(Signal)进行状态广播。
@@ -170,23 +192,12 @@ class GET(Transport):
         super().__init__(src, loc, co_num, info)
 
     async def _transport_file(self, src: str, loc: str) -> None:
-        last_size = 0
-
-        def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
-            nonlocal last_size
-            delta = now_size - last_size
-            self._total_progress_size += delta
-            self.progress_updated.emit(self._total_progress_size)
-            last_size = now_size
-
+        tracker = ProgressTracker(self)
         try:
-            await self.sftp.get(src, loc, progress_handler=update)
+            await self.sftp.get(src, loc, progress_handler=tracker)
         except (OSError, asyncssh.SFTPError):
             all_size = await self.sftp.getsize(src)
-            delta = all_size - last_size
-            self._total_progress_size += delta
-            self.progress_updated.emit(self._total_progress_size)
-            self.transport_fail_filename += f"{src}\n"
+            tracker.handle_fail(all_size, src)
 
     async def search_transport_file(self, src: str, loc: str) -> int:
         if not os.path.exists(loc):
@@ -230,23 +241,12 @@ class PUT(Transport):
         self.task_list_mkdir = []
 
     async def _transport_file(self, src: str, loc: str) -> None:
-        last_size = 0
-
-        def update(_src: bytes, _loc: bytes, now_size: int, _all_size: int) -> None:
-            nonlocal last_size
-            delta = now_size - last_size
-            self._total_progress_size += delta
-            self.progress_updated.emit(self._total_progress_size)
-            last_size = now_size
-
+        tracker = ProgressTracker(self)
         try:
-            await self.sftp.put(src, loc, progress_handler=update)
+            await self.sftp.put(src, loc, progress_handler=tracker)
         except (OSError, asyncssh.SFTPError, asyncio.CancelledError):
             all_size = os.path.getsize(src)
-            delta = all_size - last_size
-            self._total_progress_size += delta
-            self.progress_updated.emit(self._total_progress_size)
-            self.transport_fail_filename += f"{src}\n"
+            tracker.handle_fail(all_size, src)
 
     def search_transport_file(self, src: str, loc: str) -> int:
         total_size = 0
