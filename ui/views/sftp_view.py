@@ -168,12 +168,22 @@ class RemoteFileWidget(QListWidget):
         self.copy_paths.clear()
 
     def put_items(self) -> None:
+        failed_msgs = []
         for item, old_path in self.move_paths:
             try:
                 self.info.move_file(old_path, self.info.getcwd())
                 item.setHidden(False)
-            except:
-                pass
+            except Exception as e:
+                # 记录报错的具体文件和原因
+                failed_msgs.append(f"{old_path} -> {str(e)}")
+                # 移动失败，把之前隐藏的图标重新显示出来
+                item.setHidden(False)
+
+        # 如果有失败的记录，统一弹窗警告
+        if failed_msgs:
+            error_details = "\n".join(failed_msgs)
+            QMessageBox.warning(self, "移动失败", f"以下文件移动失败，可能权限不足:\n{error_details}")
+
         self.move_paths.clear()
 
     def download_items(self) -> None:
@@ -242,16 +252,36 @@ class RemoteFileWidget(QListWidget):
     def double_item(self, index: QModelIndex):
         item = self.item(index.row())
         path = item.text()
+
+        # 定义预览文件的最大安全阈值，这里设为 5MB (5 * 1024 * 1024 字节)
+        MAX_PREVIEW_SIZE = 5 * 1024 * 1024
+
         try:
             if self.info.is_file(path) and (not is_binary(path)):
+                # 1. 先获取文件大小
+                file_size = self.info.get_file_size(path)
+
+                # 2. 如果文件超过阈值，进行拦截并询问用户是否下载
+                if file_size > MAX_PREVIEW_SIZE:
+                    reply = QMessageBox.question(
+                        self, "文件过大",
+                        f"该文本文件体积较大（{file_size / 1024 / 1024:.2f} MB），直接在编辑器预览可能导致程序内存溢出或卡死。\n\n是否将其下载到本地查看？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        self.download_item(item)  # 直接调用原有的下载逻辑
+                    return  # 提前终止，不执行后面的 read_file
+
+                # 3. 文件在安全范围内，正常读取并打开编辑窗口
                 text = self.info.read_file(path)
                 edit = Edit(self, self.info.realpath(path), text)
                 edit.show()
             else:
                 self.path_change_msg.emit(self.info.realpath(path))
                 self.info.chdir(path)
-        except:
-            pass
+        except Exception as e:
+            # 这里顺便结合了第四个问题的异常捕获优化
+            QMessageBox.warning(self, "操作失败", f"无法打开文件或进入该目录。\n错误信息: {e}")
 
     def move_items(self) -> None:
         for item in self.selectedItems():
@@ -283,8 +313,9 @@ class TransportTargetWidget(RemoteFileWidget):
             if not self.info.is_file(path):
                 new_path = os.path.join(self.abspath, path).replace("\\", "/")
                 self.chdir(new_path)
-        except Exception:
-            pass
+        except Exception as e:
+            # 加入目录访问受限的反馈
+            QMessageBox.warning(self, "访问失败", f"无法进入目标目录:\n{e}")
 
     def chdir(self, path: str):
         self.path_change_msg.emit(path)
@@ -570,6 +601,7 @@ class SFTPTabWidget(QWidget):
         # 启动核心 Session
         self.info = SSHSFTPInfo(host, port, username, password, client_keys, passphrase)
         self.info.start()
+        self.info.wait_for_connection()
 
         # 包含各项功能面板
         self.control_widget = ControlWidget(self)
