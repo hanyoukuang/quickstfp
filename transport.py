@@ -187,9 +187,11 @@ class ProgressBar(QWidget):
 class Transport:
     transport_future: asyncio.Future
     pool: ImmediateSchedulerPool
+    is_cancel: bool
 
     def __init__(self, src: str, loc: str, co_num: int, info: 'SSHSFTPInfo', pbar: ProgressBar) -> None:
         super().__init__()
+        self.is_cancel = False
         self.src = src
         self.loc = loc
         self.co_num = co_num
@@ -223,8 +225,8 @@ class Transport:
             future.result()
         except:
             pass
-        finally:
-            self.pbar.del_widget_msg.emit()
+        self.pbar.del_widget_msg.emit()
+        self.is_cancel = True
 
     def __call__(self, *args, **kwargs):
         self.start()
@@ -243,7 +245,6 @@ class GET(Transport):
             self.pbar.now_progressbar_size += now_size - last_size
             last_size = now_size
 
-        # async with self.semaphore:
         try:
             await self.sftp.get(src, loc, progress_handler=update)
         except (OSError, asyncssh.SFTPError):
