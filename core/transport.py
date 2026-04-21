@@ -7,6 +7,7 @@ import asyncssh
 from PySide6.QtCore import Signal, Slot, QObject
 
 from core.session import SSHSFTPInfo
+from utils.file_utils import path_stand
 
 
 class ImmediateSchedulerPool:
@@ -98,14 +99,6 @@ class ImmediateSchedulerPool:
         self._all_done_event.set()
 
 
-def path_stand(src: str, loc: str) -> tuple[str, str]:
-    """统一路径格式，并拼接目标路径"""
-    src = src.replace('\\', '/').rstrip('/')
-    loc = loc.replace('\\', '/').rstrip('/')
-    loc = '/'.join((loc, src.split('/')[-1]))
-    return src, loc
-
-
 class Transport(QObject):
     """
     基础传输核心类。完全脱离 UI 控件依赖，仅通过信号(Signal)进行状态广播。
@@ -138,10 +131,16 @@ class Transport(QObject):
         """传输协程结束后的回调，负责发出失败异常通知"""
         try:
             future.result()
-        except Exception:
+        except asyncio.CancelledError:
+            # 任务被用户主动取消，属于正常行为，忽略即可
             pass
+        except Exception as e:
+            # 捕获整个传输过程中的致命异常（如断网），通过信号发给UI层
+            self.transport_failed.emit(f"传输任务异常中止: {str(e)}")
+
+        # 这里保留原来的逻辑：通知具体哪些文件失败了
         if self.transport_fail_filename:
-            self.transport_failed.emit(self.transport_fail_filename)
+            self.transport_failed.emit(f"部分文件读写失败:\n{self.transport_fail_filename}")
 
     def start(self):
         """启动传输任务（调度到后台事件循环）"""
