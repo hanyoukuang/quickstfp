@@ -49,6 +49,7 @@ class ProgressBar(QWidget):
 
         # 将按钮点击事件转化为对外的业务信号
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        self.cancel_button.clicked.connect(self.del_widget_msg.emit)
 
     @Slot(int)
     def set_progress_range(self, max_value: int):
