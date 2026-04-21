@@ -11,7 +11,7 @@ from database.user_model import UserInfoDB
 
 class BaseLoginWidget(QWidget):
     """
-    登录视图的基类，提取了共用的 UI 和逻辑
+    登录视图的基类，提取了共用的 UI、账户加载和输入校验逻辑
     """
     # 将需要的连接参数打包为字典发射出去
     session_requested = Signal(dict)
@@ -46,6 +46,41 @@ class BaseLoginWidget(QWidget):
         else:
             self.password_edit.setEchoMode(QLineEdit.EchoMode.Normal)
 
+    def load_remembered_users(self, query_func):
+        """抽取公共的账户下拉框加载逻辑"""
+        self.user_info_value = query_func()
+        self.remember_userinfo_combox.addItems([f"{val[1]}:{val[2]}:{val[3]}" for val in self.user_info_value])
+        self.remember_userinfo_combox.currentIndexChanged.connect(self.fill_remember_userinfo)
+
+        # 如果数据库中有数据，初始化时主动调用一次填充逻辑
+        if self.user_info_value:
+            self.fill_remember_userinfo(0)
+
+    def get_base_login_params(self):
+        """抽取公共的参数获取与校验逻辑"""
+        try:
+            host = self.host_edit.text().strip()
+            port_text = self.port_edit.text().strip()
+            username = self.username_edit.text().strip()
+            password = self.password_edit.text()
+
+            # 统一拦截非法输入
+            if not port_text:
+                raise ValueError("端口不能为空")
+            port = int(port_text)
+
+            if not host or not username:
+                raise ValueError("必填项不能为空")
+
+            return host, port, username, password
+        except ValueError:
+            QMessageBox.warning(self, "输入警告", "请按照规范输入信息(例如端口需为数字，必要参数不得为空)")
+            return None
+
+    def fill_remember_userinfo(self, index: int):
+        """由子类根据各自的字段数量来实现具体的填充"""
+        raise NotImplementedError
+
     def attempt_login(self):
         """子类需实现具体的登录参数收集逻辑"""
         raise NotImplementedError
@@ -67,41 +102,28 @@ class PasswordLoginWidget(BaseLoginWidget):
         self.form_layout.addRow("显示密码", self.display_or_hide_password_checkbox)
         self.form_layout.addRow("", self.login_button)
 
-        self.user_info_value = self.userinfo_db.query_all_password()
-        self.remember_userinfo_combox.addItems([f"{val[1]}:{val[2]}:{val[3]}" for val in self.user_info_value])
-        self.remember_userinfo_combox.currentIndexChanged.connect(self.fill_remember_userinfo)
-
-        # 【修复点】：如果数据库中有数据，初始化时主动调用一次填充逻辑
-        if self.user_info_value:
-            self.fill_remember_userinfo(0)
+        # 一行代码完成历史数据加载
+        self.load_remembered_users(self.userinfo_db.query_all_password)
 
     def fill_remember_userinfo(self, index: int):
-        # 增加越界保护
-        if index < 0 or index >= len(self.user_info_value):
-            return
-        val = self.user_info_value[index]
-        self.host_edit.setText(val[1])
-        self.port_edit.setText(str(val[2]))
-        self.username_edit.setText(val[3])
-        self.password_edit.setText(val[4])
+        if 0 <= index < len(self.user_info_value):
+            val = self.user_info_value[index]
+            self.host_edit.setText(val[1])
+            self.port_edit.setText(str(val[2]))
+            self.username_edit.setText(val[3])
+            self.password_edit.setText(val[4])
 
     def attempt_login(self):
-        try:
-            host = self.host_edit.text()
-            port = int(self.port_edit.text())
-            username = self.username_edit.text()
-            password = self.password_edit.text()
-        except ValueError:
-            QMessageBox.warning(self, "输入警告", "请按照规范输入信息(例如端口需为数字)")
-            return
+        params = self.get_base_login_params()
 
-        if host and port and username and password:
-            self.userinfo_db.insert_password(host, port, username, password)
+        # 密码登录：要求 password (params[3]) 不能为空
+        if params and params[3]:
+            self.userinfo_db.insert_password(*params)
             self.session_requested.emit({
-                "host": host, "port": port, "username": username, "password": password
+                "host": params[0], "port": params[1], "username": params[2], "password": params[3]
             })
-        else:
-            QMessageBox.warning(self, "输入警告", "参数不得为空")
+        elif params and not params[3]:
+            QMessageBox.warning(self, "输入警告", "密码参数不得为空")
 
 
 class KeyLoginWidget(BaseLoginWidget):
@@ -129,13 +151,8 @@ class KeyLoginWidget(BaseLoginWidget):
         self.form_layout.addRow("显示密码", self.display_or_hide_password_checkbox)
         self.form_layout.addRow("", self.login_button)
 
-        self.user_info_value = self.userinfo_db.query_all_key()
-        self.remember_userinfo_combox.addItems([f"{val[1]}:{val[2]}:{val[3]}" for val in self.user_info_value])
-        self.remember_userinfo_combox.currentIndexChanged.connect(self.fill_remember_userinfo)
-
-        # 【修复点】：如果数据库中有数据，初始化时主动调用一次填充逻辑
-        if self.user_info_value:
-            self.fill_remember_userinfo(0)
+        # 一行代码完成历史数据加载
+        self.load_remembered_users(self.userinfo_db.query_all_key)
 
     def select_path(self):
         filename, _ = QFileDialog.getOpenFileName(self, "选择私钥文件")
@@ -143,35 +160,27 @@ class KeyLoginWidget(BaseLoginWidget):
             self.key_path_edit.setText(filename)
 
     def fill_remember_userinfo(self, index: int):
-        # 增加越界保护
-        if index < 0 or index >= len(self.user_info_value):
-            return
-        val = self.user_info_value[index]
-        self.host_edit.setText(val[1])
-        self.port_edit.setText(str(val[2]))
-        self.username_edit.setText(val[3])
-        self.key_path_edit.setText(val[4])
-        self.password_edit.setText(val[5])
+        if 0 <= index < len(self.user_info_value):
+            val = self.user_info_value[index]
+            self.host_edit.setText(val[1])
+            self.port_edit.setText(str(val[2]))
+            self.username_edit.setText(val[3])
+            self.key_path_edit.setText(val[4])
+            self.password_edit.setText(val[5])
 
     def attempt_login(self):
-        try:
-            host = self.host_edit.text()
-            port = int(self.port_edit.text())
-            username = self.username_edit.text()
-            key_path = self.key_path_edit.text()
-            password = self.password_edit.text()
-        except ValueError:
-            QMessageBox.warning(self, "输入警告", "请按照规范输入信息")
-            return
+        params = self.get_base_login_params()
+        key_path = self.key_path_edit.text()
 
-        if host and port and username and key_path:
-            self.userinfo_db.insert_key(host, port, username, key_path, password)
+        # 秘钥登录：要求私钥地址不能为空（passphrase 可以为空）
+        if params and key_path:
+            self.userinfo_db.insert_key(params[0], params[1], params[2], key_path, params[3])
             self.session_requested.emit({
-                "host": host, "port": port, "username": username,
-                "client_keys": [key_path], "passphrase": password
+                "host": params[0], "port": params[1], "username": params[2],
+                "client_keys": [key_path], "passphrase": params[3]
             })
-        else:
-            QMessageBox.warning(self, "输入警告", "参数不得为空")
+        elif params and not key_path:
+            QMessageBox.warning(self, "输入警告", "私钥地址不得为空")
 
 
 class LoginTabWidget(QWidget):
