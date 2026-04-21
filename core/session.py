@@ -36,13 +36,15 @@ class SSHSFTPInfo(QThread):
         self.password = password
         self.client_keys = client_keys
         self.passphrase = passphrase
-
+        self.banner_msg = ""
         # 初始化并在主线程阻塞等待连接建立完成
         self.loop = asyncio.new_event_loop()
         self.loop.run_until_complete(self.get_session())
 
     async def get_session(self) -> None:
         """异步建立 SSH 连接、初始化 SFTP 客户端及终端进程"""
+
+        # 【修改】将拦截器通过 client_factory 注入到连接中
         self.connection = await asyncssh.connect(
             host=self.host,
             port=self.port,
@@ -50,14 +52,14 @@ class SSHSFTPInfo(QThread):
             password=self.password,
             client_keys=self.client_keys,
             passphrase=self.passphrase,
-            known_hosts=None
+            known_hosts=None,
         )
-        self.sftp = await self.connection.start_sftp_client()
         self.process = await self.connection.create_process(
             request_pty=True,
-            term_type='xterm',
+            term_type='xterm-256color',
             term_size=(80, 24)
         )
+        self.sftp = await self.connection.start_sftp_client()
         self.connect_is_ready = True
 
     def is_file(self, path: str) -> bool:
