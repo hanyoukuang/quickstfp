@@ -98,75 +98,54 @@ class SSHSFTPInfo(QThread):
         )
         self.sftp = await self.connection.start_sftp_client()
 
-    def is_file(self, path: str) -> bool:
-        """判断远端路径是否为文件"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.isfile(path), self.loop)
+    def _run_sync(self, coro):
+        """统一封装异步协程的同步等待"""
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
         return self._wait_future(future)
+
+    def is_file(self, path: str) -> bool:
+        return self._run_sync(self.sftp.isfile(path))
 
     def chdir(self, path: str) -> None:
-        """切换远端工作目录"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.chdir(path), self.loop)
-        self._wait_future(future)
+        self._run_sync(self.sftp.chdir(path))
 
     def getcwd(self) -> str:
-        """获取远端当前工作目录"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.getcwd(), self.loop)
-        return self._wait_future(future)
+        return self._run_sync(self.sftp.getcwd())
 
     async def _read_file(self, path: str) -> str:
-        text = ""
         async with self.sftp.open(path, "rb") as fp:
-            text = (await fp.read()).decode('u8')
-        return text
+            return (await fp.read()).decode('u8')
 
     async def _save_file(self, src: str, text: str) -> None:
         async with self.sftp.open(src, 'wb') as f:
             await f.write(text.encode())
 
     def read_file(self, path: str) -> str:
-        """读取远端文件内容"""
-        future = asyncio.run_coroutine_threadsafe(self._read_file(path), self.loop)
-        return self._wait_future(future)
+        return self._run_sync(self._read_file(path))
 
     def save_file(self, path: str, text: str) -> None:
-        """保存内容到远端文件"""
-        future = asyncio.run_coroutine_threadsafe(self._save_file(path, text), self.loop)
-        self._wait_future(future)
+        self._run_sync(self._save_file(path, text))
 
     def realpath(self, path: str) -> str:
-        """获取远端绝对路径"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.realpath(path), self.loop)
-        return self._wait_future(future)
+        return self._run_sync(self.sftp.realpath(path))
 
     def del_file(self, path: str) -> None:
-        """删除远端文件或目录"""
-        future = asyncio.run_coroutine_threadsafe(self.connection.run(f"rm -rf {path}\n"), self.loop)
-        self._wait_future(future)
+        return self._run_sync(self.connection.run(f"rm -rf {path}\n"))
 
     def makedirs(self, path: str) -> None:
-        """在远端创建目录"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.makedirs(path, exist_ok=True), self.loop)
-        self._wait_future(future)
+        return self._run_sync(self.sftp.makedirs(path, exist_ok=True))
 
     def copy_file(self, old_path: str, new_path: str) -> None:
-        """在远端复制文件"""
-        future = asyncio.run_coroutine_threadsafe(self.connection.run(f"cp -rf {old_path} {new_path}\n"), self.loop)
-        self._wait_future(future)
+        return self._run_sync(self.connection.run(f"cp -rf {old_path} {new_path}\n"))
 
     def move_file(self, old_path: str, new_path: str) -> None:
-        """在远端移动文件"""
-        future = asyncio.run_coroutine_threadsafe(self.connection.run(f"mv {old_path} {new_path}\n"), self.loop)
-        self._wait_future(future)
+        return self._run_sync(self.connection.run(f"mv {old_path} {new_path}\n"))
 
     def rename(self, old_name: str, new_name: str) -> None:
-        """在远端重命名文件"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.rename(old_name, new_name), self.loop)
-        self._wait_future(future)
+        return self._run_sync(self.sftp.rename(old_name, new_name))
 
     def get_file_size(self, path: str) -> int:
-        """获取远端文件大小（单位：字节）"""
-        future = asyncio.run_coroutine_threadsafe(self.sftp.getsize(path), self.loop)
-        return self._wait_future(future)
+        return self._run_sync(self.sftp.getsize(path))
 
     def run(self) -> None:
         """启动独立线程中的 asyncio 事件循环"""
