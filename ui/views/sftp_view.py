@@ -560,10 +560,14 @@ class TransportControlWidget(QListWidget):
         task.progress_updated.connect(pbar.set_progress_value)
         task.range_initialized.connect(pbar.set_progress_range)
         task.transport_failed.connect(pbar.warning_transport_fail_filename)
+        task.speed_updated.connect(pbar.set_speed_text)
 
-        # 绑定 UI 的取消操作 -> 核心层
+        # 绑定 UI 操作 -> 核心层
         pbar.cancel_requested.connect(task.cancel)
         pbar.del_widget_msg.connect(lambda: self.takeItem(self.row(item)))
+
+        # --- 新增：绑定 UI 的暂停信号到 Core 的控制阀门 ---
+        pbar.pause_requested.connect(task.toggle_pause)
 
     def get(self, src: str, dst: str, coro_num: int):
         self.clear_finish_task()
