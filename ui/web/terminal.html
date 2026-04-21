@@ -11,13 +11,14 @@
 
     <style>
         html, body {
-          margin: 0;
-          height: 100%;
-          background: black;
+            margin: 0;
+            height: 100%;
+            background: black;
         }
+
         #terminal {
-          width: 100%;
-          height: 100%;
+            width: 100%;
+            height: 100%;
         }
     </style>
 </head>
@@ -27,8 +28,8 @@
 
 <script>
     const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14
+        cursorBlink: true,
+        fontSize: 14
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
@@ -37,30 +38,30 @@
     let bridge = null;
 
     function resizeTerminal() {
-      fitAddon.fit();                 // ① 重新计算
-      const cols = term.cols;
-      const rows = term.rows;
-
-      console.log("resize:", cols, rows);
-
-      if (bridge) {
-        bridge.resize(cols, rows);    // ② 发给后端
-      }
+        fitAddon.fit();
+        if (bridge) {
+            bridge.resize(term.cols, term.rows);
+        }
     }
 
     new QWebChannel(qt.webChannelTransport, channel => {
-      bridge = channel.objects.bridge;
+        bridge = channel.objects.bridge;
 
-      term.onData(data => {
-        bridge.on_input(data);
-      });
+        term.onData(data => {
+            bridge.on_input(data);
+        });
 
-      bridge.output.connect(text => {
-        term.write(text);
-      });
+        bridge.output.connect(text => {
+            term.write(text);
+        });
 
-      resizeTerminal();               // 初始化同步
-      bridge.start();
+        // 【核心修复】：先计算当前终端的行列数，然后再传给 Python 后端
+        fitAddon.fit();
+        const cols = term.cols || 80;
+        const rows = term.rows || 24;
+
+        // 这里的 cols 和 rows 会对应 Python 中 @Slot(int, int) 的两个参数
+        bridge.start(cols, rows);
     });
 
     window.addEventListener("resize", resizeTerminal);
