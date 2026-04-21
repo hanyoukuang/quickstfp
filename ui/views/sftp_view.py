@@ -15,7 +15,7 @@ from asyncssh import SFTPName
 from core.session import SSHSFTPInfo
 from core.transport import GET, PUT
 from ui.components.progress_bar import ProgressBar
-from ui.components.terminal_widget import SSHPtyWidget  # 假设 terminal.py 仍在根目录，或者请根据您的实际路径修改导入
+from ui.components.terminal_widget import SSHPtyWidget
 from utils.file_utils import is_binary
 
 
@@ -29,34 +29,53 @@ class MonitorRemoteFileChange:
         self.sub_file_msg = remote_file_widget.sub_file_msg
         self.now_remote_path = "."
 
-    async def check_file_new(self):
-        new_files = []
-        while True:
-            new_files.clear()
-            async for entry in self.sftp.scandir(self.now_remote_path):
-                if entry.filename in (".", ".."):
-                    continue
-                if entry.filename not in self.remote_file_widget.all_files_dict:
-                    new_files.append(entry)
-            if new_files:
-                self.new_file_msg.emit(new_files)
-            await asyncio.sleep(1)
+        # 新增：用于记录上一次扫描时目录的修改时间
+        self.last_mtime = None
 
-    async def check_file_old(self):
-        sub_files = []
+    async def check_file_changes(self):
+        """合并新文件和旧文件的检查，并使用 stat 优化网络 I/O"""
         while True:
-            sub_files.clear()
-            now_file_list = set([entry.filename async for entry in self.sftp.scandir(self.now_remote_path)])
-            for file in self.remote_file_widget.all_files_dict:
-                if file not in now_file_list:
-                    sub_files.append(file)
-            if sub_files:
-                self.sub_file_msg.emit(sub_files)
+            try:
+                # 1. 轻量级检查：只获取当前目录本身的元数据
+                dir_attrs = await self.sftp.stat(self.now_remote_path)
+                current_mtime = dir_attrs.mtime
+
+                # 如果目录修改时间没变，说明没有文件增删，直接跳过本次完整扫描
+                if self.last_mtime == current_mtime:
+                    await asyncio.sleep(1)
+                    continue
+
+                self.last_mtime = current_mtime
+
+                # 2. 只有时间变化时，才发起高成本的 scandir
+                now_file_entries = []
+                async for entry in self.sftp.scandir(self.now_remote_path):
+                    if entry.filename not in (".", ".."):
+                        now_file_entries.append(entry)
+
+                now_filenames = {entry.filename for entry in now_file_entries}
+                known_filenames = set(self.remote_file_widget.all_files_dict.keys())
+
+                # 3. 集合运算：计算新增的文件
+                new_files = [e for e in now_file_entries if e.filename not in known_filenames]
+                if new_files:
+                    self.new_file_msg.emit(new_files)
+
+                # 4. 集合运算：计算被删除的文件
+                sub_files = list(known_filenames - now_filenames)
+                if sub_files:
+                    self.sub_file_msg.emit(sub_files)
+
+            except Exception:
+                # 捕获异常：防止在切换目录 (chdir) 瞬间导致路径不存在而抛出异常崩溃
+                self.last_mtime = None
+
+            # 建议将此处稍微提高至 1.5 - 2 秒，肉眼感知的实时性差异不大，但能大幅降低压力
             await asyncio.sleep(1)
 
     def start(self):
-        asyncio.run_coroutine_threadsafe(self.check_file_new(), self.loop)
-        asyncio.run_coroutine_threadsafe(self.check_file_old(), self.loop)
+        # 原本启动两个独立的任务，现在只需要启动合并后的单任务
+        asyncio.run_coroutine_threadsafe(self.check_file_changes(), self.loop)
 
 
 class Edit(QTextEdit):
