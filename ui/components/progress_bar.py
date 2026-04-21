@@ -7,16 +7,14 @@ from PySide6.QtWidgets import QProgressBar, QWidget, QHBoxLayout, QLabel, QMessa
 class ProgressBar(QWidget):
     """
     独立的文件传输进度条组件。
-    纯 UI 层，只负责显示进度和抛出用户操作信号，不包含底层传输逻辑。
     """
-    # 接收来自外部(核心层)的信号，用于更新 UI
     update_pbar_msg = Signal(int)
     init_pbar_msg = Signal(int)
     transport_fail_msg = Signal(str)
 
-    # 向外部抛出的信号
-    del_widget_msg = Signal()  # 移除本组件的请求
-    cancel_requested = Signal()  # 用户点击了取消按钮
+    del_widget_msg = Signal()
+    cancel_requested = Signal()
+    pause_requested = Signal()
 
     def __init__(self, filename: str, transport_type: str, icon: QIcon):
         super().__init__()
@@ -28,8 +26,18 @@ class ProgressBar(QWidget):
         self.filename_label = QLabel(f"{self.transport_type}: {self.filename}")
         self.picture_label = QLabel()
         self.progress_bar = QProgressBar()
+
+        # --- 必须在这里完成暂停按钮和网速标签的初始化 ---
+        self.speed_label = QLabel("0.00 B/s")
+        self.speed_label.setFixedWidth(80)
+
+        self.is_paused = False
+        self.pause_button = QPushButton("Pause")  # 确保这个属性被创建
+        # ------------------------------------------------
+
         self.cancel_button = QPushButton("Cancel")
 
+        # 初始化UI和绑定信号必须放在所有组件实例化之后
         self.init_ui()
         self._connect_signals()
 
@@ -38,6 +46,11 @@ class ProgressBar(QWidget):
         self.layout.addWidget(self.filename_label)
         self.layout.addWidget(self.picture_label)
         self.layout.addWidget(self.progress_bar)
+
+        # 按照顺序将新组件添加到布局中
+        self.layout.addWidget(self.speed_label)
+        self.layout.addWidget(self.pause_button)
+
         self.layout.addWidget(self.cancel_button)
         self.setLayout(self.layout)
 
@@ -47,9 +60,10 @@ class ProgressBar(QWidget):
         self.init_pbar_msg.connect(self.set_progress_range)
         self.transport_fail_msg.connect(self.warning_transport_fail_filename)
 
-        # 将按钮点击事件转化为对外的业务信号
+        # 绑定 UI 的点击事件
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.cancel_button.clicked.connect(self.del_widget_msg.emit)
+        self.pause_button.clicked.connect(self._toggle_pause_ui)  # 此时 pause_button 已经存在
 
     @Slot(int)
     def set_progress_range(self, max_value: int):
@@ -68,3 +82,14 @@ class ProgressBar(QWidget):
                 f"传输失败:\n{value}",
                 QMessageBox.StandardButton.Ok
             )
+
+    @Slot(str)
+    def set_speed_text(self, speed_str: str):
+        self.speed_label.setText(speed_str)
+
+    def _toggle_pause_ui(self):
+        """处理UI样式变化，并对外抛出信号"""
+        self.is_paused = not self.is_paused
+        # 切换按钮文字
+        self.pause_button.setText("Resume" if self.is_paused else "Pause")
+        self.pause_requested.emit()
