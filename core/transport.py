@@ -11,6 +11,40 @@ from core.session import SSHSFTPInfo
 from utils.file_utils import path_stand
 
 
+class SpeedLimiter:
+    """基于令牌桶算法的全局限速器（支持多协程共享）"""
+
+    def __init__(self, limit_kbps: int):
+        # 内部换算为 Byte/s
+        self.limit_bps = limit_kbps * 1024
+        self.tokens = self.limit_bps
+        self.last_time = time.monotonic()
+        self.lock = asyncio.Lock()
+
+    async def consume(self, amount: int):
+        if self.limit_bps <= 0:
+            return
+
+        async with self.lock:
+            now = time.monotonic()
+            elapsed = now - self.last_time
+
+            # 补充这段时间内产生的令牌，上限不超过一秒的量
+            self.tokens = min(self.limit_bps, self.tokens + elapsed * self.limit_bps)
+
+            if self.tokens < amount:
+                # 令牌不够，计算需要等待的时间
+                wait_time = (amount - self.tokens) / self.limit_bps
+                await asyncio.sleep(wait_time)
+                # 睡醒后，更新时间和清空令牌（相当于刚好消耗完这些时间的产出）
+                self.last_time = time.monotonic()
+                self.tokens = 0
+            else:
+                # 令牌充足，直接扣除
+                self.tokens -= amount
+                self.last_time = now
+
+
 class ImmediateSchedulerPool:
     """
     异步任务并发控制池。
@@ -161,12 +195,14 @@ class Transport(QObject):
     transport_cancelled = Signal()  # 任务被取消
     speed_updated = Signal(str)  # 网速
 
-    def __init__(self, src: str, loc: str, co_num: int, info: 'SSHSFTPInfo') -> None:
+    def __init__(self, src: str, loc: str, co_num: int, speed_limit: int, info: 'SSHSFTPInfo') -> None:
         super().__init__()
         self.is_cancel = False
         self.src = src
         self.loc = loc
         self.co_num = co_num
+        self.speed_limit = speed_limit
+        self.limiter = SpeedLimiter(speed_limit)
         self.sftp = info.sftp
         self.loop = info.loop
         self.transport_coro_list = []
@@ -246,8 +282,8 @@ class Transport(QObject):
 class GET(Transport):
     """下载任务核心类"""
 
-    def __init__(self, src: str, loc: str, co_num: int, info: 'SSHSFTPInfo') -> None:
-        super().__init__(src, loc, co_num, info)
+    def __init__(self, src: str, loc: str, co_num: int, speed_limit: int, info: 'SSHSFTPInfo') -> None:
+        super().__init__(src, loc, co_num, speed_limit, info)
 
     async def _transport_file(self, src: str, loc: str) -> None:
         try:
@@ -264,16 +300,23 @@ class GET(Transport):
 
             tracker = ProgressTracker(self, initial_size=start_pos)
 
+            chunk_size = 1024 * 1024  # 默认 1MB
+            if self.speed_limit > 0:
+                # 最小 32KB 分块，最大 1MB
+                chunk_size = min(1024 * 1024, max(1024 * 32, self.speed_limit * 1024))
+
             async with self.sftp.open(src, 'rb') as remote_file:
                 if start_pos > 0:
                     await remote_file.seek(start_pos)
                 with open(loc, mode) as local_file:
                     now_size = start_pos
                     while True:
-                        # --- 核心：阻塞点，如果被清空则挂起当前协程 ---
                         await self.pause_event.wait()
 
-                        chunk = await remote_file.read(1024 * 1024)  # 1MB 分块
+                        # 【新增】：读取前先过一次限速卡点
+                        await self.limiter.consume(chunk_size)
+
+                        chunk = await remote_file.read(chunk_size)  # 替换原来的 1024 * 1024
                         if not chunk:
                             break
                         local_file.write(chunk)
@@ -326,8 +369,8 @@ class GET(Transport):
 class PUT(Transport):
     """上传任务核心类"""
 
-    def __init__(self, src: str, loc: str, co_num: int, session: 'SSHSFTPInfo') -> None:
-        super().__init__(src, loc, co_num, session)
+    def __init__(self, src: str, loc: str, co_num: int, speed_limit: int, session: 'SSHSFTPInfo') -> None:
+        super().__init__(src, loc, co_num, speed_limit, session)
         self.task_list_mkdir = []
 
     async def _transport_file(self, src: str, loc: str) -> None:
@@ -347,6 +390,10 @@ class PUT(Transport):
 
             tracker = ProgressTracker(self, initial_size=start_pos)
 
+            chunk_size = 1024 * 1024
+            if self.speed_limit > 0:
+                chunk_size = min(1024 * 1024, max(1024 * 32, self.speed_limit * 1024))
+
             async with self.sftp.open(loc, mode) as remote_file:
                 if start_pos > 0:
                     await remote_file.seek(start_pos)
@@ -354,10 +401,12 @@ class PUT(Transport):
                     local_file.seek(start_pos)
                     now_size = start_pos
                     while True:
-                        # --- 核心：阻塞点 ---
                         await self.pause_event.wait()
 
-                        chunk = local_file.read(1024 * 1024)
+                        # 【新增】：写入前先过一次限速卡点
+                        await self.limiter.consume(chunk_size)
+
+                        chunk = local_file.read(chunk_size)  # 替换原来的 1024 * 1024
                         if not chunk:
                             break
                         await remote_file.write(chunk)
