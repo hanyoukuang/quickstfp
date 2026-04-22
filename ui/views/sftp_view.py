@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QMenu, QInputDialog, QSlider, QTreeView, QFileSystemModel,
     QCheckBox, QDialogButtonBox, QDialog, QGridLayout
 )
+from PySide6.QtWidgets import QSpinBox
 
 from core.session import SSHSFTPInfo
 from core.transport import GET, PUT
@@ -562,6 +563,10 @@ class UserSelectTargetWidget(QWidget):
         self.dst_edit = QLineEdit()
         self.coro_num_label = QLabel("协程数量:20")
         self.coro_num_slider = QSlider(Qt.Orientation.Horizontal)
+        self.speed_limit_spin = QSpinBox()
+        self.speed_limit_spin.setRange(0, 999999)  # 单位 KB/s
+        self.speed_limit_spin.setValue(0)
+        self.speed_limit_spin.setSuffix(" KB/s (0为不限速)")
         self.src_button = QPushButton()
         self.src_dir_button = QPushButton()
         self.dst_button = QPushButton()
@@ -576,6 +581,8 @@ class UserSelectTargetWidget(QWidget):
         self.form.addRow(self.src_edit, hbox)
         self.form.addRow(self.dst_edit, self.dst_button)
         self.form.addRow(self.coro_num_label, self.coro_num_slider)
+        self.form.addRow(QLabel("传输限速:"), self.speed_limit_spin)
+        self.form.addRow(self.transport_button, QLabel())
         self.form.addRow(self.transport_button, QLabel())
         self.setLayout(self.form)
         self.src_edit.setReadOnly(True)
@@ -613,8 +620,10 @@ class UserSelectGetTargetWidget(UserSelectTargetWidget):
 
     def start_get(self):
         if self.src_edit.text() and self.dst_edit.text():
+            # 加上 self.speed_limit_spin.value()
             self.transport_control_widget.get(self.src_edit.text(), self.dst_edit.text(),
-                                              self.coro_num_slider.value())
+                                              self.coro_num_slider.value(),
+                                              self.speed_limit_spin.value())
         else:
             QMessageBox.warning(self, "参数警告", "请把参数填完整")
 
@@ -649,8 +658,10 @@ class UserSelectPutTargetWidget(UserSelectTargetWidget):
 
     def start_put(self):
         if self.src_edit.text() and self.dst_edit.text():
+            # 加上 self.speed_limit_spin.value()
             self.transport_control_widget.put(self.src_edit.text(), self.dst_edit.text(),
-                                              self.coro_num_slider.value())
+                                              self.coro_num_slider.value(),
+                                              self.speed_limit_spin.value())
         else:
             QMessageBox.warning(self, "参数警告", "请把参数填完整")
 
@@ -779,27 +790,28 @@ class TransportControlWidget(QListWidget):
         # --- 新增：绑定 UI 的暂停信号到 Core 的控制阀门 ---
         pbar.pause_requested.connect(task.toggle_pause)
 
-    def get(self, src: str, dst: str, coro_num: int):
+    def get(self, src: str, dst: str, coro_num: int, speed_limit: int = 0):
         self.clear_finish_task()
         icon = self.FILE_ICON if self.info.is_file(src) else self.DIR_ICON
         pbar = ProgressBar(src, "下载", icon)
 
-        # 创建纯逻辑传输对象，不再强塞 UI 对象
-        task = GET(src, dst, coro_num, self.info)
+        # 把 speed_limit 传给底层
+        task = GET(src, dst, coro_num, speed_limit, self.info)
         self._create_task_ui(pbar, task)
         self.task_list.append(task)
-        task()  # 启动任务
+        task()
 
-    def put(self, src: str, dst: str, coro_num: int):
+    # 接收 speed_limit
+    def put(self, src: str, dst: str, coro_num: int, speed_limit: int = 0):
         self.clear_finish_task()
         icon = self.FILE_ICON if os.path.isfile(src) else self.DIR_ICON
         pbar = ProgressBar(src, "上传", icon)
 
-        # 创建纯逻辑传输对象
-        task = PUT(src, dst, coro_num, self.info)
+        # 把 speed_limit 传给底层
+        task = PUT(src, dst, coro_num, speed_limit, self.info)
         self._create_task_ui(pbar, task)
         self.task_list.append(task)
-        task()  # 启动任务
+        task()
 
 
 class SFTPTabWidget(QWidget):
