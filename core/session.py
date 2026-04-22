@@ -170,3 +170,37 @@ class SSHSFTPInfo(QThread):
 
         if self.connect_is_ready:
             self.loop.run_forever()
+
+    def close_session(self):
+        """
+        线程安全地关闭会话，取消所有后台协程，防止 Task destroyed but it is pending 报错
+        """
+        if getattr(self, 'loop', None) is None or not self.loop.is_running():
+            return
+
+        async def _cleanup():
+            # 1. 正常关闭 SSH/SFTP/Process 等底层连接
+            if getattr(self, 'sftp', None):
+                self.sftp.exit()
+            if getattr(self, 'process', None):
+                self.process.close()
+            if getattr(self, 'connection', None):
+                self.connection.close()
+
+            # 2. 找出当前事件循环中除了“清理任务本身”之外的所有挂起的 Task
+            current_task = asyncio.current_task(self.loop)
+            tasks = [t for t in asyncio.all_tasks(self.loop) if t is not current_task]
+
+            # 3. 向这些任务发送终止(Cancel)信号
+            for task in tasks:
+                task.cancel()
+
+            # 4. 等待这些任务处理完 CancelledError 并彻底结束
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 5. 所有任务清理完毕后，安全停止事件循环
+            self.loop.stop()
+
+        # 将上面的异步清理逻辑通过线程安全的通道丢给后台 asyncio 去执行
+        asyncio.run_coroutine_threadsafe(_cleanup(), self.loop)
