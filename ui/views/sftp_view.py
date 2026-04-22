@@ -1,16 +1,18 @@
 # ui/views/sftp_view.py
 import asyncio
 import os
+import stat
 
 from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir
 from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QListWidget, QStyle, QApplication, QListWidgetItem, QPushButton,
     QMessageBox, QSplitter, QHBoxLayout, QStackedWidget, QLineEdit,
     QFormLayout, QLabel, QVBoxLayout, QWidget, QTextEdit, QFileDialog,
-    QAbstractItemView, QMenu, QInputDialog, QSlider, QTreeView, QFileSystemModel
+    QAbstractItemView, QMenu, QInputDialog, QSlider, QTreeView, QFileSystemModel,
+    QCheckBox, QDialogButtonBox, QDialog, QGridLayout
 )
-from asyncssh import SFTPName
 
 from core.session import SSHSFTPInfo
 from core.transport import GET, PUT
@@ -97,6 +99,62 @@ class Edit(QTextEdit):
             self.info.save_file(self.path, now_text)
 
 
+class PermissionDialog(QDialog):
+    """文件/文件夹权限修改弹窗"""
+
+    def __init__(self, parent, filename: str, current_perms: int):
+        super().__init__(parent)
+        self.setWindowTitle(f"属性/权限 - {filename}")
+        self.current_perms = current_perms
+        self.checkboxes = {}
+
+        layout = QVBoxLayout(self)
+        grid = QGridLayout()
+
+        # 表头
+        grid.addWidget(QLabel("读取 (R)"), 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(QLabel("写入 (W)"), 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(QLabel("执行 (X)"), 0, 3, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # 权限映射表 (描述, 读位, 写位, 执行位)
+        roles = [
+            ("所有者 (Owner)", stat.S_IRUSR, stat.S_IWUSR, stat.S_IXUSR),
+            ("所属组 (Group)", stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP),
+            ("公共 (Others)", stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH)
+        ]
+
+        # 渲染 3x3 复选框阵列
+        for row, (role_name, r_flag, w_flag, x_flag) in enumerate(roles, start=1):
+            grid.addWidget(QLabel(role_name), row, 0)
+
+            for col, flag in enumerate([r_flag, w_flag, x_flag], start=1):
+                cb = QCheckBox()
+                # 通过按位与运算判断当前是否拥有该权限
+                cb.setChecked(bool(current_perms & flag))
+                grid.addWidget(cb, row, col, alignment=Qt.AlignmentFlag.AlignCenter)
+                self.checkboxes[flag] = cb
+
+        layout.addLayout(grid)
+
+        # 确认与取消按钮
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
+
+    def get_new_permissions(self) -> int:
+        """收集面板上勾选的状态，计算成新的八进制权限数字"""
+        new_perms = 0
+        # 必须保留文件的高位类型（说明它是普通文件、文件夹还是软链接）
+        new_perms |= stat.S_IFMT(self.current_perms)
+
+        # 叠加面板上的新权限
+        for flag, cb in self.checkboxes.items():
+            if cb.isChecked():
+                new_perms |= flag
+        return new_perms
+
+
 class FileSelect(QWidget):
     def __init__(self, user_select_target_widget: 'UserSelectTargetWidget'):
         super().__init__(parent=user_select_target_widget)
@@ -166,7 +224,7 @@ class LocalFileWidget(QWidget):
             self.path_edit.setText(new_path)
 
 
-class RemoteFileWidget(QListWidget):
+class RemoteFileWidget(QTreeView):  # <--- 改为继承 QTreeView
     new_file_msg = Signal(list)
     sub_file_msg = Signal(list)
     path_change_msg = Signal(str)
@@ -176,6 +234,17 @@ class RemoteFileWidget(QListWidget):
         self.sftp_tab_widget = sftp_tab_widget
         self.FILE_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+
+        # --- 使用标准数据模型绑定 QTreeView ---
+        self.model = QStandardItemModel()
+        self.model.setHorizontalHeaderLabels(["名称"])
+        self.setModel(self.model)
+        self.setHeaderHidden(True)  # 隐藏表头，和左侧保持视觉一致
+
+        # 设置选择行为为整行选中，且不可直接双击编辑名字
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
         self.move_paths = []
         self.copy_paths = []
         self.info = sftp_tab_widget.info
@@ -183,45 +252,21 @@ class RemoteFileWidget(QListWidget):
         self.monitor = MonitorRemoteFileChange(self)
         self.init_ui()
 
-    def dragEnterEvent(self, event):
-        """当外部物体拖入控件上方时触发"""
-        if event.mimeData().hasUrls():
-            event.accept()  # 直接调用 accept() 接收
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        """【关键修复】：必须重写此方法，防止 QListWidget 拦截拖拽路径"""
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        """当松开鼠标放下文件时触发"""
-        if event.mimeData().hasUrls():
-            event.accept()
-            urls = event.mimeData().urls()
-
-            for url in urls:
-                local_path = url.toLocalFile()
-                if local_path:
-                    # 触发上传，传输到当前的远端工作目录
-                    self.sftp_tab_widget.transport_control_widget.put(
-                        local_path,
-                        self.info.getcwd(),
-                        20
-                    )
-        else:
-            super().dropEvent(event)
+    def selectedItems(self):
+        """兼容底层原有的多选获取逻辑"""
+        indexes = self.selectionModel().selectedIndexes()
+        # 过滤掉其他列，只返回第一列的 Item
+        return [self.model.itemFromIndex(idx) for idx in indexes if idx.column() == 0]
 
     def set_menu(self):
-        self.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
     def show_context_menu(self, pos):
-        item = self.itemAt(pos)
+        index = self.indexAt(pos)
+        item = self.model.itemFromIndex(index) if index.isValid() else None
+
         context_menu = QMenu(self)
         makedir_action = context_menu.addAction("新建文件夹")
         new_file_action = context_menu.addAction("新文件")
@@ -229,31 +274,52 @@ class RemoteFileWidget(QListWidget):
         makedir_action.triggered.connect(self.makedir)
         new_file_action.triggered.connect(self.new_file)
         refresh_action.triggered.connect(self.refresh)
+
         if item:
             edit_action = context_menu.addAction("打开")
             del_action = context_menu.addAction("删除")
             move_action = context_menu.addAction("移动")
             copy_action = context_menu.addAction("复制")
             download_action = context_menu.addAction("下载")
-            edit_action.triggered.connect(lambda: self.double_item(pos))
+            edit_action.triggered.connect(lambda: self.double_item(index))
             del_action.triggered.connect(self.del_items)
             move_action.triggered.connect(self.move_items)
             copy_action.triggered.connect(self.copy_items)
             download_action.triggered.connect(self.download_items)
+
         if self.move_paths:
             context_menu.addAction("放置").triggered.connect(self.put_items)
         if self.copy_paths:
             context_menu.addAction("粘贴").triggered.connect(self.paste_items)
-        if len(self.selectedItems()) == 1:
+
+        if len(self.selectedItems()) == 1 and item:
             rename_action = context_menu.addAction("重命名")
             rename_action.triggered.connect(lambda: self.rename(item))
+
+            # 高级属性修改
+            chmod_action = context_menu.addAction("属性/权限")
+            chmod_action.triggered.connect(lambda: self.change_permissions(item))
+
         context_menu.exec(self.mapToGlobal(pos))
 
+    def change_permissions(self, item: QStandardItem):
+        path = self.info.realpath(item.text())
+        try:
+            current_perms = self.info.get_permissions(path)
+            dialog = PermissionDialog(self, item.text(), current_perms)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_perms = dialog.get_new_permissions()
+                if new_perms != current_perms:
+                    self.info.chmod(path, new_perms)
+                    QMessageBox.information(self, "成功", f"【{item.text()}】权限修改成功！")
+        except Exception as e:
+            QMessageBox.warning(self, "操作失败", f"无法获取或修改文件权限:\n{e}")
+
     def refresh(self):
-        self.clear()
+        self.model.removeRows(0, self.model.rowCount())
         self.all_files_dict.clear()
 
-    def rename(self, item: QListWidgetItem) -> None:
+    def rename(self, item: QStandardItem) -> None:
         text, ok = QInputDialog.getText(self, "重命名", "输入新的文件名")
         if ok:
             self.info.rename(item.text(), str(text))
@@ -268,14 +334,11 @@ class RemoteFileWidget(QListWidget):
         for item, old_path in self.move_paths:
             try:
                 self.info.move_file(old_path, self.info.getcwd())
-                item.setHidden(False)
+                self.setRowHidden(item.row(), QModelIndex(), False)  # 取消隐藏
             except Exception as e:
-                # 记录报错的具体文件和原因
                 failed_msgs.append(f"{old_path} -> {str(e)}")
-                # 移动失败，把之前隐藏的图标重新显示出来
-                item.setHidden(False)
+                self.setRowHidden(item.row(), QModelIndex(), False)  # 移动失败也取消隐藏
 
-        # 如果有失败的记录，统一弹窗警告
         if failed_msgs:
             error_details = "\n".join(failed_msgs)
             QMessageBox.warning(self, "移动失败", f"以下文件移动失败，可能权限不足:\n{error_details}")
@@ -286,21 +349,19 @@ class RemoteFileWidget(QListWidget):
         for item in self.selectedItems():
             self.download_item(item)
 
-    def download_item(self, item: QListWidgetItem) -> None:
+    def download_item(self, item: QStandardItem) -> None:
         os.makedirs("tmp", exist_ok=True)
         self.sftp_tab_widget.transport_control_widget.get(self.info.realpath(item.text()), "./tmp", 20)
 
     def del_items(self) -> None:
-        text = ""
-        for item in self.selectedItems():
-            text += item.text() + "\n"
+        text = "\n".join([item.text() for item in self.selectedItems()])
         reply = QMessageBox.question(self, "删除", f"确认删除:\n{text}\n",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             for item in self.selectedItems():
                 self.del_item(item)
 
-    def del_item(self, item: QListWidgetItem) -> None:
+    def del_item(self, item: QStandardItem) -> None:
         src = self.info.realpath(item.text())
         self.info.del_file(src)
 
@@ -319,47 +380,68 @@ class RemoteFileWidget(QListWidget):
         self.sub_file_msg.connect(self.del_sub_file)
         self.doubleClicked.connect(self.double_item)
         self.monitor.start()
+
+        # 开启拖放支持
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+            urls = event.mimeData().urls()
+            for url in urls:
+                local_path = url.toLocalFile()
+                if local_path:
+                    self.sftp_tab_widget.transport_control_widget.put(
+                        local_path, self.info.getcwd(), 20
+                    )
+        else:
+            super().dropEvent(event)
+
     @Slot(list)
-    def add_new_file(self, new_files: list[SFTPName]):
+    def add_new_file(self, new_files: list):
         for entry in new_files:
             filename = entry.filename
             if filename in self.all_files_dict:
                 continue
-            item = QListWidgetItem(filename)
+            item = QStandardItem(filename)
             if entry.attrs.type == 2:
                 item.setIcon(self.DIR_ICON)
-                self.insertItem(0, item)
+                self.model.insertRow(0, item)
             else:
                 item.setIcon(self.FILE_ICON)
-                self.addItem(item)
+                self.model.appendRow(item)
             self.all_files_dict[filename] = item
 
     @Slot(list)
-    def del_sub_file(self, sub_files: list[SFTPName]):
+    def del_sub_file(self, sub_files: list):
         for file in sub_files:
             if file not in self.all_files_dict:
                 continue
             item = self.all_files_dict[file]
-            row = self.row(item)
-            self.takeItem(row)
+            self.model.removeRow(item.row())
             self.all_files_dict.pop(file)
 
     def double_item(self, index: QModelIndex):
-        item = self.item(index.row())
+        item = self.model.itemFromIndex(index)
         path = item.text()
-
-        # 定义预览文件的最大安全阈值，这里设为 5MB (5 * 1024 * 1024 字节)
         MAX_PREVIEW_SIZE = 5 * 1024 * 1024
 
         try:
             if self.info.is_file(path) and (not is_binary(path)):
-                # 1. 先获取文件大小
                 file_size = self.info.get_file_size(path)
-
-                # 2. 如果文件超过阈值，进行拦截并询问用户是否下载
                 if file_size > MAX_PREVIEW_SIZE:
                     reply = QMessageBox.question(
                         self, "文件过大",
@@ -367,10 +449,8 @@ class RemoteFileWidget(QListWidget):
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                     )
                     if reply == QMessageBox.StandardButton.Yes:
-                        self.download_item(item)  # 直接调用原有的下载逻辑
-                    return  # 提前终止，不执行后面的 read_file
-
-                # 3. 文件在安全范围内，正常读取并打开编辑窗口
+                        self.download_item(item)
+                    return
                 text = self.info.read_file(path)
                 edit = Edit(self, self.info.realpath(path), text)
                 edit.show()
@@ -378,22 +458,22 @@ class RemoteFileWidget(QListWidget):
                 self.path_change_msg.emit(self.info.realpath(path))
                 self.info.chdir(path)
         except Exception as e:
-            # 这里顺便结合了第四个问题的异常捕获优化
             QMessageBox.warning(self, "操作失败", f"无法打开文件或进入该目录。\n错误信息: {e}")
 
     def move_items(self) -> None:
         for item in self.selectedItems():
             self.move_item(item)
 
-    def move_item(self, item: QListWidgetItem) -> None:
-        item.setHidden(True)
+    def move_item(self, item: QStandardItem) -> None:
+        # 在 QTreeView 中隐藏某一行的做法
+        self.setRowHidden(item.row(), QModelIndex(), True)
         self.move_paths.append((item, self.info.realpath(item.text())))
 
     def copy_items(self) -> None:
         for item in self.selectedItems():
             self.copy_item(item)
 
-    def copy_item(self, item: QListWidgetItem) -> None:
+    def copy_item(self, item: QStandardItem) -> None:
         self.copy_paths.append(self.info.realpath(item.text()))
 
 
@@ -405,14 +485,13 @@ class TransportTargetWidget(RemoteFileWidget):
         self.chdir(self.info.getcwd())
 
     def double_item(self, index: QModelIndex):
-        item = self.item(index.row())
+        item = self.model.itemFromIndex(index)  # <--- 修改这一行即可
         path = item.text()
         try:
             if not self.info.is_file(path):
                 new_path = os.path.join(self.abspath, path).replace("\\", "/")
                 self.chdir(new_path)
         except Exception as e:
-            # 加入目录访问受限的反馈
             QMessageBox.warning(self, "访问失败", f"无法进入目标目录:\n{e}")
 
     def chdir(self, path: str):
