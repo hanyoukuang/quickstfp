@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from PySide6.QtCore import Qt, QModelIndex, Signal, Slot
+from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QListWidget, QStyle, QApplication, QListWidgetItem, QPushButton,
     QMessageBox, QSplitter, QHBoxLayout, QStackedWidget, QLineEdit,
     QFormLayout, QLabel, QVBoxLayout, QWidget, QTextEdit, QFileDialog,
-    QAbstractItemView, QMenu, QInputDialog, QSlider
+    QAbstractItemView, QMenu, QInputDialog, QSlider, QTreeView, QFileSystemModel
 )
 from asyncssh import SFTPName
 
@@ -102,6 +102,70 @@ class FileSelect(QWidget):
         super().__init__(parent=user_select_target_widget)
 
 
+class LocalFileWidget(QWidget):
+    """
+    本地文件系统浏览器。
+    使用 QFileSystemModel 自动加载系统文件，并支持将其拖拽出去。
+    """
+
+    def __init__(self):
+        super().__init__()
+        # 1. 初始化本地文件系统模型
+        self.model = QFileSystemModel()
+        self.model.setRootPath(QDir.rootPath())
+
+        # 2. 初始化树形视图
+        self.tree = QTreeView()
+        self.tree.setModel(self.model)
+        # 默认从用户的家目录开始显示 (Windows 是 C:\Users\xxx, Mac/Linux 是 /home/xxx)
+        self.tree.setRootIndex(self.model.index(QDir.homePath()))
+
+        # 开启拖拽支持：允许将本地文件直接拖拽出去
+        self.tree.setDragEnabled(True)
+
+        # 优化显示：隐藏多余的列，只保留文件名（类似于只看名字），如果你想看大小和修改日期，可以注释掉下面这行
+        for i in range(1, 4): self.tree.hideColumn(i)
+
+        # 3. 顶部路径与控制栏
+        self.path_edit = QLineEdit(QDir.homePath())
+        self.path_edit.setReadOnly(True)
+        self.up_button = QPushButton("返回上级")
+
+        self.init_ui()
+
+    def init_ui(self):
+        # 布局组装
+        hbox = QHBoxLayout()
+        hbox.addWidget(self.up_button)
+        hbox.addWidget(self.path_edit)
+
+        vbox = QVBoxLayout()
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.addLayout(hbox)
+        vbox.addWidget(self.tree)
+        self.setLayout(vbox)
+
+        # 信号连接
+        self.tree.doubleClicked.connect(self.on_double_click)
+        self.up_button.clicked.connect(self.go_up)
+
+    def on_double_click(self, index: QModelIndex):
+        """双击文件夹时，进入该文件夹"""
+        path = self.model.filePath(index)
+        if self.model.isDir(index):
+            self.tree.setRootIndex(index)
+            self.path_edit.setText(path)
+
+    def go_up(self):
+        """返回上一级目录"""
+        current_path = self.path_edit.text()
+        parent_dir = QDir(current_path)
+        if parent_dir.cdUp():
+            new_path = parent_dir.absolutePath()
+            self.tree.setRootIndex(self.model.index(new_path))
+            self.path_edit.setText(new_path)
+
+
 class RemoteFileWidget(QListWidget):
     new_file_msg = Signal(list)
     sub_file_msg = Signal(list)
@@ -118,6 +182,38 @@ class RemoteFileWidget(QListWidget):
         self.all_files_dict = dict()
         self.monitor = MonitorRemoteFileChange(self)
         self.init_ui()
+
+    def dragEnterEvent(self, event):
+        """当外部物体拖入控件上方时触发"""
+        if event.mimeData().hasUrls():
+            event.accept()  # 直接调用 accept() 接收
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        """【关键修复】：必须重写此方法，防止 QListWidget 拦截拖拽路径"""
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        """当松开鼠标放下文件时触发"""
+        if event.mimeData().hasUrls():
+            event.accept()
+            urls = event.mimeData().urls()
+
+            for url in urls:
+                local_path = url.toLocalFile()
+                if local_path:
+                    # 触发上传，传输到当前的远端工作目录
+                    self.sftp_tab_widget.transport_control_widget.put(
+                        local_path,
+                        self.info.getcwd(),
+                        20
+                    )
+        else:
+            super().dropEvent(event)
 
     def set_menu(self):
         self.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -223,6 +319,8 @@ class RemoteFileWidget(QListWidget):
         self.sub_file_msg.connect(self.del_sub_file)
         self.doubleClicked.connect(self.double_item)
         self.monitor.start()
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
 
     @Slot(list)
     def add_new_file(self, new_files: list[SFTPName]):
@@ -479,25 +577,54 @@ class UserSFTPWidget(QWidget):
         super().__init__()
         self.sftp_tab_widget = sftp_tab_widget
         self.info = sftp_tab_widget.info
+
+        # --- 左侧：全新的本地文件面板 ---
+        self.local_file_widget = LocalFileWidget()
+
+        # --- 右侧：原有的远端文件面板 ---
         self.remote_file_widget = RemoteFileWidget(sftp_tab_widget)
-        self.back_button = QPushButton("<<")
-        self.get_button = QPushButton("下载")
+        self.back_button = QPushButton("返回上级")
+        self.get_button = QPushButton("下载选定")
         self.path_edit = QLineEdit(sftp_tab_widget.info.realpath("."))
-        self.put_button = QPushButton("上传")
-        self.vbox = QVBoxLayout()
-        self.hbox = QHBoxLayout()
+        self.put_button = QPushButton("高级上传")
+
         self.init_ui()
 
     def init_ui(self):
         self.remote_file_widget.set_menu()
         self.remote_file_widget.path_change_msg.connect(self.display_path)
-        self.hbox.addWidget(self.back_button)
-        self.hbox.addWidget(self.path_edit)
-        self.hbox.addWidget(self.get_button)
-        self.hbox.addWidget(self.put_button)
-        self.vbox.addLayout(self.hbox)
-        self.vbox.addWidget(self.remote_file_widget)
-        self.setLayout(self.vbox)
+
+        # 组装右侧（远端）的顶栏
+        remote_hbox = QHBoxLayout()
+        remote_hbox.addWidget(self.back_button)
+        remote_hbox.addWidget(self.path_edit)
+        remote_hbox.addWidget(self.get_button)
+        remote_hbox.addWidget(self.put_button)
+
+        # 组装右侧（远端）主容器
+        remote_vbox = QVBoxLayout()
+        remote_vbox.setContentsMargins(0, 0, 0, 0)
+        remote_vbox.addLayout(remote_hbox)
+        remote_vbox.addWidget(self.remote_file_widget)
+
+        remote_container = QWidget()
+        remote_container.setLayout(remote_vbox)
+
+        # --- 核心：使用 QSplitter 将左右两边拼起来 ---
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.local_file_widget)
+        self.splitter.addWidget(remote_container)
+
+        # 设置左右宽度比例为 1:1
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+
+        # 设置主布局
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.splitter)
+        self.setLayout(main_layout)
+
+        # 信号绑定
         self.path_edit.setReadOnly(True)
         self.back_button.clicked.connect(self.back_parent_path)
         self.get_button.clicked.connect(self.get)
