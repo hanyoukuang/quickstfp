@@ -1,4 +1,5 @@
 # ui/views/site_manager.py
+import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
@@ -46,9 +47,18 @@ class SiteManagerWidget(QWidget):
         btn_layout.addWidget(self.btn_new)
         btn_layout.addWidget(self.btn_delete)
 
+        io_layout = QHBoxLayout()
+        self.btn_import = QPushButton("导入")
+        self.btn_export = QPushButton("导出")
+        self.btn_import.clicked.connect(self.import_sites)
+        self.btn_export.clicked.connect(self.export_sites)
+        io_layout.addWidget(self.btn_import)
+        io_layout.addWidget(self.btn_export)
+
         left_layout.addWidget(QLabel("<b>保存的会话</b>"))
         left_layout.addWidget(self.site_list)
         left_layout.addLayout(btn_layout)
+        left_layout.addLayout(io_layout)
 
         # ========== 右侧：详情编辑与连接 ==========
         right_widget = QWidget()
@@ -126,6 +136,78 @@ class SiteManagerWidget(QWidget):
         main_layout.addWidget(splitter)
 
         self.clear_form()
+
+    def export_sites(self):
+        """将当前的站点配置导出为 JSON 文件"""
+        filename, _ = QFileDialog.getSaveFileName(self, "导出站点配置", "sftp_sites.json", "JSON Files (*.json)")
+        if not filename:
+            return
+
+        export_data = {"passwords": [], "keys": []}
+
+        # 获取并序列化密码登录站点
+        # query_all_password 返回: (id, host, port, username, password)
+        for r in self.userinfo_db.query_all_password():
+            export_data["passwords"].append({
+                "host": r[1],
+                "port": r[2],
+                "username": r[3],
+                "password": r[4]
+            })
+
+        # 获取并序列化私钥登录站点
+        # query_all_key 返回: (id, host, port, username, key_path, passphrase)
+        for r in self.userinfo_db.query_all_key():
+            export_data["keys"].append({
+                "host": r[1],
+                "port": r[2],
+                "username": r[3],
+                "key_path": r[4],
+                "passphrase": r[5]
+            })
+
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=4)
+            QMessageBox.information(self, "成功", "站点配置已成功导出！\n(注：导出的 JSON 文件中包含明文密码，请妥善保管)")
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"导出过程中发生错误：\n{e}")
+
+    def import_sites(self):
+        """从 JSON 文件导入站点配置"""
+        filename, _ = QFileDialog.getOpenFileName(self, "导入站点配置", "", "JSON Files (*.json)")
+        if not filename:
+            return
+
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                import_data = json.load(f)
+
+            # 导入密码登录站点
+            passwords = import_data.get("passwords", [])
+            for p in passwords:
+                self.userinfo_db.insert_password(
+                    p.get("host", ""),
+                    p.get("port", 22),
+                    p.get("username", ""),
+                    p.get("password", "")
+                )
+
+            # 导入私钥登录站点
+            keys = import_data.get("keys", [])
+            for k in keys:
+                self.userinfo_db.insert_key(
+                    k.get("host", ""),
+                    k.get("port", 22),
+                    k.get("username", ""),
+                    k.get("key_path", ""),
+                    k.get("passphrase", "")
+                )
+
+            self.load_sites()
+            QMessageBox.information(self, "成功", "站点配置导入成功！相同的配置已被自动去重。")
+        except Exception as e:
+            QMessageBox.warning(self, "导入失败", f"导入过程中发生错误（可能文件格式不正确）：\n{e}")
 
     def on_auth_type_changed(self, index):
         self.auth_stacked_widget.setCurrentIndex(index)
