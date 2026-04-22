@@ -224,7 +224,7 @@ class LocalFileWidget(QWidget):
             self.path_edit.setText(new_path)
 
 
-class RemoteFileWidget(QTreeView):  # <--- 改为继承 QTreeView
+class RemoteFileWidget(QTreeView):
     new_file_msg = Signal(list)
     sub_file_msg = Signal(list)
     path_change_msg = Signal(str)
@@ -239,10 +239,14 @@ class RemoteFileWidget(QTreeView):  # <--- 改为继承 QTreeView
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["名称"])
         self.setModel(self.model)
-        self.setHeaderHidden(True)  # 隐藏表头，和左侧保持视觉一致
 
-        # 设置选择行为为整行选中，且不可直接双击编辑名字
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # 1. 恢复显示表头（注释或删除这行）
+        # self.setHeaderHidden(True)
+
+        # 2. 取消整行选中，恢复操作系统默认的单元格高亮（注释或删除这行）
+        # self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        # 建议保留不可直接双击编辑，因为目前远端文件重命名是靠右键菜单呼出对话框实现的
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
         self.move_paths = []
@@ -838,9 +842,11 @@ class SFTPTabWidget(QWidget):
 
     def closeEvent(self, event, /):
         super().closeEvent(event)
-        self.info.sftp.exit()
-        self.info.process.close()
-        self.info.connection.close()
-        self.info.loop.stop()
+
+        # 使用新增加的优雅退出方法清理所有连接和挂起的 Task
+        self.info.close_session()
+
+        # 退出 QThread
         self.info.quit()
+        # 最多等待 3 秒给后台线程做清理收尾工作
         self.info.wait(3000)
