@@ -147,6 +147,15 @@ class SSHSFTPInfo(QThread):
     def get_file_size(self, path: str) -> int:
         return self._run_sync(self.sftp.getsize(path))
 
+    def get_permissions(self, path: str) -> int:
+        """获取远端文件/文件夹的权限 (返回十进制的 stat 权限值)"""
+        attrs = self._run_sync(self.sftp.stat(path))
+        return attrs.permissions
+
+    def chmod(self, path: str, permissions: int) -> None:
+        """修改远端文件/文件夹的权限"""
+        self._run_sync(self.sftp.chmod(path, permissions))
+
     def run(self) -> None:
         """启动独立线程中的 asyncio 事件循环"""
         self.loop = asyncio.new_event_loop()
