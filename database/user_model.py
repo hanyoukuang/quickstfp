@@ -183,6 +183,23 @@ class UserInfoDB:
         if self.conn:
             self.conn.close()
 
+        # 在 UserInfoDB 类中补充以下两个方法
+
+    def update_password(self, idx: int, host: str, port: int, username: str, password: str) -> None:
+        """更新密码登录记录"""
+        encrypted_password = self.crypto.encrypt(password)
+        sql = "UPDATE Password SET host=?, port=?, username=?, password=? WHERE id=?"
+        self.cursor.execute(sql, (host, port, username, encrypted_password, idx))
+        self.conn.commit()
+
+    def update_key(self, idx: int, host: str, port: int, username: str, key_path: str,
+                   passphrase: str = "") -> None:
+        """更新秘钥登录记录"""
+        encrypted_passphrase = self.crypto.encrypt(passphrase)
+        sql = "UPDATE Key SET host=?, port=?, username=?, key_path=?, passphrase=? WHERE id=?"
+        self.cursor.execute(sql, (host, port, username, key_path, encrypted_passphrase, idx))
+        self.conn.commit()
+
     def __del__(self):
         """确保对象销毁时关闭游标和连接"""
         try:
