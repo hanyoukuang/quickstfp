@@ -80,6 +80,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "连接失败", f"无法连接到 {tab_name}:\n{e}")
 
+    def closeEvent(self, event):
+        """
+        拦截主窗口关闭事件。在程序退出前，依次安全关闭所有标签页，
+        确保后台的 SSH QThread 被正确终止，避免 "Destroyed while thread is still running" 错误。
+        """
+        # 只要还有标签页打开，就一直关闭第0个标签页
+        while self.tab_widget.count() > 0:
+            self.close_tab(0)
+
+        # 如果站点管理器还开着，也一并清理
+        if self.site_manager is not None:
+            self.site_manager.close()
+            self.site_manager.deleteLater()
+
+        # 资源清理完毕，允许主窗口正常关闭
+        event.accept()
+
+    # ==========================================================
+
     def close_tab(self, index: int):
         """
         关闭指定的标签页，并释放底层网络资源
