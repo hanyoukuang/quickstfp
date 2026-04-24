@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import stat
+import shutil
 
 from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir, QMimeData, QByteArray, QRect, QPoint
 from PySide6.QtGui import QCloseEvent, QDrag, QPixmap, QPainter
@@ -158,17 +159,17 @@ class FileSelect(QWidget):
 class LocalFileWidget(QWidget):
     """
     本地文件系统浏览器。
-    已适配本地文件内部拖动，并接收远端文件的下载拖放。
+    已适配本地文件内部拖动，并接收远端文件的下载拖放，新增本地右键菜单功能。
     """
 
-    def __init__(self, sftp_tab_widget: 'SFTPTabWidget'):  # 【修改】：增加 sftp_tab_widget 参数
+    def __init__(self, sftp_tab_widget: 'SFTPTabWidget'):
         super().__init__()
         self.sftp_tab_widget = sftp_tab_widget
 
         # 1. 初始化本地文件系统模型
         self.model = QFileSystemModel()
         self.model.setRootPath(QDir.rootPath())
-        self.model.setReadOnly(False)  # 【核心修改】：关闭只读模式以支持原生本地文件的拖放移动
+        self.model.setReadOnly(False)  # 关闭只读模式以支持原生本地文件的操作
 
         # 2. 初始化树形视图 (使用修改后的自定义 View)
         self.tree = LocalFileTreeView(self.sftp_tab_widget)
@@ -182,6 +183,10 @@ class LocalFileWidget(QWidget):
         self.path_edit = QLineEdit(QDir.homePath())
         self.path_edit.setReadOnly(True)
         self.up_button = QPushButton("返回上级")
+
+        # --- 新增：剪贴板变量 ---
+        self.copy_paths = []
+        self.move_paths = []
 
         self.init_ui()
 
@@ -199,6 +204,11 @@ class LocalFileWidget(QWidget):
         self.tree.doubleClicked.connect(self.on_double_click)
         self.up_button.clicked.connect(self.go_up)
 
+        # --- 新增：开启多选和右键菜单支持 ---
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.show_context_menu)
+
     def on_double_click(self, index: QModelIndex):
         path = self.model.filePath(index)
         if self.model.isDir(index):
@@ -212,6 +222,142 @@ class LocalFileWidget(QWidget):
             new_path = parent_dir.absolutePath()
             self.tree.setRootIndex(self.model.index(new_path))
             self.path_edit.setText(new_path)
+
+    # ==================== 右键菜单与功能实现 ====================
+    def show_context_menu(self, pos):
+        index = self.tree.indexAt(pos)
+        menu = QMenu(self)
+
+        new_folder_action = menu.addAction("新建文件夹")
+        new_folder_action.triggered.connect(lambda *args: self.new_folder(index))
+
+        if index.isValid():
+            menu.addSeparator()
+            rename_action = menu.addAction("重命名")
+            rename_action.triggered.connect(lambda *args: self.rename(index))
+
+            del_action = menu.addAction("删除")
+            del_action.triggered.connect(lambda *args: self.delete_items())
+
+            menu.addSeparator()
+            copy_action = menu.addAction("复制")
+            copy_action.triggered.connect(lambda *args: self.copy_items())
+
+            move_action = menu.addAction("移动")
+            move_action.triggered.connect(lambda *args: self.move_items())
+
+        if self.copy_paths or self.move_paths:
+            menu.addSeparator()
+            paste_action = menu.addAction("粘贴")
+            paste_action.triggered.connect(lambda *args: self.paste_items(index))
+
+        menu.exec(self.tree.mapToGlobal(pos))
+
+    def new_folder(self, index: QModelIndex):
+        # 确定新建文件夹的目标目录
+        if index.isValid() and self.model.isDir(index):
+            target_dir = self.model.filePath(index)
+        else:
+            target_dir = self.model.filePath(self.tree.rootIndex())
+
+        text, ok = QInputDialog.getText(self, "新建", "输入文件夹名")
+        if ok and text:
+            new_dir = os.path.join(target_dir, text)
+            try:
+                os.makedirs(new_dir, exist_ok=True)
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"新建文件夹失败:\n{e}")
+
+    def rename(self, index: QModelIndex):
+        old_path = self.model.filePath(index)
+        old_name = self.model.fileName(index)
+        text, ok = QInputDialog.getText(self, "重命名", "输入新的名称", QLineEdit.EchoMode.Normal, old_name)
+        if ok and text and text != old_name:
+            new_path = os.path.join(os.path.dirname(old_path), text)
+            try:
+                os.rename(old_path, new_path)
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"重命名失败:\n{e}")
+
+    def delete_items(self):
+        indexes = self.tree.selectionModel().selectedRows()
+        if not indexes:
+            return
+        paths = [self.model.filePath(idx) for idx in indexes]
+
+        text = "\n".join([os.path.basename(p) for p in paths])
+        reply = QMessageBox.question(self, "删除", f"确认删除以下项 (不可恢复)？\n{text}\n",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            for path in paths:
+                try:
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                except Exception as e:
+                    QMessageBox.warning(self, "删除失败", f"{path} 删除失败:\n{e}")
+
+    def copy_items(self):
+        indexes = self.tree.selectionModel().selectedRows()
+        self.copy_paths = [self.model.filePath(idx) for idx in indexes]
+        self.move_paths.clear()
+
+    def move_items(self):
+        indexes = self.tree.selectionModel().selectedRows()
+        self.move_paths = [self.model.filePath(idx) for idx in indexes]
+        self.copy_paths.clear()
+
+    def paste_items(self, index: QModelIndex):
+        # 确定粘贴的目标目录
+        if index.isValid() and self.model.isDir(index):
+            target_dir = self.model.filePath(index)
+        else:
+            # 如果右击到了普通文件，或者在空白处右击，默认粘贴到它所在的同级目录/当前根目录
+            parent_dir = os.path.dirname(self.model.filePath(index)) if index.isValid() else self.model.filePath(
+                self.tree.rootIndex())
+            target_dir = parent_dir
+
+        failed_msgs = []
+
+        if self.copy_paths:
+            for path in self.copy_paths:
+                try:
+                    basename = os.path.basename(path)
+                    dest = os.path.join(target_dir, basename)
+                    # 处理同名文件/文件夹重叠
+                    if os.path.exists(dest):
+                        if os.path.isdir(path):
+                            dest += " - 副本"
+                        else:
+                            base, ext = os.path.splitext(dest)
+                            dest = f"{base} - 副本{ext}"
+
+                    if os.path.isdir(path):
+                        if dest.startswith(path):
+                            failed_msgs.append(f"{basename} -> 不能复制到自身的子目录")
+                            continue
+                        shutil.copytree(path, dest)
+                    else:
+                        shutil.copy2(path, dest)
+                except Exception as e:
+                    failed_msgs.append(f"{os.path.basename(path)} -> {e}")
+
+        elif self.move_paths:
+            for path in self.move_paths:
+                try:
+                    dest = os.path.join(target_dir, os.path.basename(path))
+                    if dest.startswith(path):
+                        failed_msgs.append(f"{os.path.basename(path)} -> 不能移动到自身的子目录")
+                        continue
+                    shutil.move(path, target_dir)
+                except Exception as e:
+                    failed_msgs.append(f"{os.path.basename(path)} -> {e}")
+            # 移动完成后清空剪贴板
+            self.move_paths.clear()
+
+        if failed_msgs:
+            QMessageBox.warning(self, "部分操作失败", "以下项操作失败:\n" + "\n".join(failed_msgs))
 
 
 class NumericSortItem(QStandardItem):
@@ -311,10 +457,16 @@ class RemoteFileWidget(QTreeView):
             copy_action.triggered.connect(self.copy_items)
             download_action.triggered.connect(self.download_items)
 
+        def trigger_put(*args):
+            self.put_items(item)
+
+        def trigger_paste(*args):
+            self.paste_items(item)
+
         if self.move_paths:
-            context_menu.addAction("放置").triggered.connect(self.put_items)
+            context_menu.addAction("放置").triggered.connect(trigger_put)
         if self.copy_paths:
-            context_menu.addAction("粘贴").triggered.connect(self.paste_items)
+            context_menu.addAction("粘贴").triggered.connect(trigger_paste)
 
         if len(self.selectedItems()) == 1 and item:
             rename_action = context_menu.addAction("重命名")
@@ -378,14 +530,47 @@ class RemoteFileWidget(QTreeView):
         src = self.get_item_path(item)
         try:
             self.info.del_file(src)
-            # 删除成功后，直接从 UI 抹除这一行（不进行全局闪烁刷新）
-            self.model.removeRow(item.row())
-            if item.text() in self.all_files_dict:
-                self.all_files_dict.pop(item.text())
+
+            # 【核心修复】：在 UI 中移除前，先保存它的文本名，防止 C++ 对象被销毁后访问报错
+            item_name = item.text()
+
+            # 删除成功后，从 UI 抹除这一行
+            parent_item = item.parent()
+            if parent_item:
+                # 属于下拉展开的子文件/文件夹
+                parent_item.removeRow(item.row())
+            else:
+                # 顶层节点
+                self.model.removeRow(item.row())
+
+            # 使用保存好的纯字符串进行字典清理
+            if item_name in self.all_files_dict:
+                self.all_files_dict.pop(item_name)
+
         except Exception as e:
             QMessageBox.warning(self, "失败", f"删除失败:\n{e}")
 
     # =======================================================================
+
+    def get_target_dir(self, item: QStandardItem) -> str:
+        """根据右键所在的 item，获取正确的粘贴/放置目标目录"""
+        base_path = getattr(self, 'abspath', self.info.getcwd())
+        if not item:
+            return base_path
+
+        index = item.index()
+        type_item = self.model.itemFromIndex(index.siblingAtColumn(2))
+
+        # 如果右键落在文件夹上，就放在这个文件夹内
+        if type_item and type_item.text() == "文件夹":
+            return self.get_item_path(item)
+        else:
+            # 如果落在文件上，就放在该文件所在的层级（父节点目录）
+            parent_item = item.parent()
+            if parent_item:
+                return self.get_item_path(parent_item)
+            else:
+                return base_path
 
     def change_permissions(self, item: QStandardItem):
         path = self.get_item_path(item)
@@ -401,21 +586,26 @@ class RemoteFileWidget(QTreeView):
         except Exception as e:
             QMessageBox.warning(self, "操作失败", f"无法获取或修改文件权限:\n{e}")
 
-    def paste_items(self) -> None:
+    def paste_items(self, target_item: QStandardItem = None) -> None:
+        target_dir = self.get_target_dir(target_item)
         for old_path in self.copy_paths:
-            self.info.copy_file(old_path, self.info.getcwd())
+            self.info.copy_file(old_path, target_dir)
         self.copy_paths.clear()
         self.refresh()
 
-    def put_items(self) -> None:
+    def put_items(self, target_item: QStandardItem = None) -> None:
         failed_msgs = []
-        for item, old_path in self.move_paths:
+        target_dir = self.get_target_dir(target_item)
+
+        for moved_item, old_path in self.move_paths:
+            # 取出 UI 节点所在的父层级用于恢复显示
+            parent_idx = moved_item.parent().index() if moved_item.parent() else QModelIndex()
             try:
-                self.info.move_file(old_path, self.info.getcwd())
-                self.setRowHidden(item.row(), QModelIndex(), False)
+                self.info.move_file(old_path, target_dir)
+                self.setRowHidden(moved_item.row(), parent_idx, False)
             except Exception as e:
                 failed_msgs.append(f"{old_path} -> {str(e)}")
-                self.setRowHidden(item.row(), QModelIndex(), False)
+                self.setRowHidden(moved_item.row(), parent_idx, False)
 
         if failed_msgs:
             QMessageBox.warning(self, "移动失败", "以下文件移动失败，可能权限不足:\n" + "\n".join(failed_msgs))
@@ -638,31 +828,80 @@ class RemoteFileWidget(QTreeView):
             if index.isValid():
                 item = self.model.itemFromIndex(index.siblingAtColumn(0))
                 type_item = self.model.itemFromIndex(index.siblingAtColumn(2))
-                if item and type_item and type_item.text() == "文件夹": dst_path = self.get_item_path(item)
+                if item and type_item and type_item.text() == "文件夹":
+                    dst_path = self.get_item_path(item)
             for url in urls:
                 local_path = url.toLocalFile()
                 if local_path: self.sftp_tab_widget.transport_control_widget.put(local_path, dst_path, 20)
+            self.refresh()
 
         elif event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
             event.accept()
             remote_paths = json.loads(
                 event.mimeData().data("application/x-quickstfp-remote-paths").data().decode('utf-8'))
+
             index = self.indexAt(event.position().toPoint())
+
+            # --- 【步骤 1：智能获取拖放的目标路径和 UI 节点】 ---
+            dst_path = getattr(self, 'abspath', self.info.getcwd())
+            target_ui_node = None  # None 代表目标是最外层（根目录）
+
             if index.isValid():
                 item = self.model.itemFromIndex(index.siblingAtColumn(0))
                 type_item = self.model.itemFromIndex(index.siblingAtColumn(2))
                 if item and type_item and type_item.text() == "文件夹":
+                    # 拖到了某个文件夹上
                     dst_path = self.get_item_path(item)
-                    for src_path in remote_paths:
-                        if src_path != dst_path:
-                            try:
-                                self.info.move_file(src_path, dst_path)
+                    target_ui_node = item
+                else:
+                    # 拖到了普通文件上，和它放在同级目录
+                    parent_item = item.parent() if item else None
+                    if parent_item:
+                        dst_path = self.get_item_path(parent_item)
+                        target_ui_node = parent_item
+
+            # --- 【步骤 2：执行移动并无缝转移 UI 节点（不刷新页面）】 ---
+            for src_path in remote_paths:
+                # 避免原位移动，以及避免移动到自身的子目录中
+                if src_path != dst_path and not dst_path.startswith(src_path + "/"):
+                    try:
+                        self.info.move_file(src_path, dst_path)
+
+                        # 找到界面中正在被拖拽的元素
+                        for moved_item in self.selectedItems():
+                            if self.get_item_path(moved_item) == src_path:
+                                source_parent = moved_item.parent()
                                 filename = src_path.split('/')[-1]
-                                if filename in self.all_files_dict:
-                                    moved_item = self.all_files_dict.pop(filename)
-                                    self.model.removeRow(moved_item.row())
-                            except Exception as e:
-                                QMessageBox.warning(self, "移动失败", f"{src_path} 移动失败:\n{e}")
+
+                                # 1. 从原位置“摘取”整行数据 (takeRow 会直接将其从原位置剥离)
+                                if source_parent:
+                                    row_items = source_parent.takeRow(moved_item.row())
+                                else:
+                                    row_items = self.model.takeRow(moved_item.row())
+
+                                # 2. 更新底层绑定的路径数据为新的路径
+                                new_full_path = f"{dst_path}/{filename}".replace("//", "/")
+                                row_items[0].setData(new_full_path, Qt.ItemDataRole.UserRole)
+
+                                # 3. 将摘下来的行插入到新目标位置
+                                if target_ui_node:
+                                    # 如果目标文件夹已经展开/加载过，则直接将节点塞进去显示
+                                    first_child = target_ui_node.child(0, 0)
+                                    if first_child and first_child.text() != "加载中...":
+                                        target_ui_node.appendRow(row_items)
+                                else:
+                                    # 如果目标是最外层根目录，直接塞进根节点，并加入缓存
+                                    self.model.appendRow(row_items)
+                                    self.all_files_dict[filename] = row_items[0]
+
+                                # 4. 清理旧缓存（如果文件从根目录移到了某个子目录里）
+                                if not source_parent and target_ui_node:
+                                    if filename in self.all_files_dict:
+                                        self.all_files_dict.pop(filename)
+
+                                break
+                    except Exception as e:
+                        QMessageBox.warning(self, "移动失败", f"{src_path} 移动失败:\n{e}")
         else:
             super().dropEvent(event)
 
@@ -848,6 +1087,7 @@ class UserSelectPutTargetWidget(UserSelectTargetWidget):
             self.transport_control_widget.put(self.src_edit.text(), self.dst_edit.text(),
                                               self.coro_num_slider.value(),
                                               self.speed_limit_spin.value())
+            self.sftp_tab_widget.user_sftp_widget.remote_file_widget.refresh()
         else:
             QMessageBox.warning(self, "参数警告", "请把参数填完整")
 
