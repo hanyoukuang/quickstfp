@@ -1,11 +1,12 @@
 # ui/views/sftp_view.py
 import asyncio
 import datetime
+import json
 import os
 import stat
 
-from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir, QMimeData, QByteArray, QRect, QPoint
+from PySide6.QtGui import QCloseEvent, QDrag, QPixmap, QPainter
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QListWidget, QStyle, QApplication, QListWidgetItem, QPushButton,
@@ -23,65 +24,55 @@ from ui.components.terminal_widget import SSHPtyWidget
 from utils.file_utils import is_binary
 
 
-class MonitorRemoteFileChange:
-    def __init__(self, remote_file_widget: 'RemoteFileWidget'):
+class LocalFileTreeView(QTreeView):
+    """
+    自定义本地树形视图，拦截远端拖拽过来的自定义 MIME 数据进行下载处理
+    """
+
+    def __init__(self, sftp_tab_widget):
         super().__init__()
-        self.remote_file_widget = remote_file_widget
-        self.sftp = remote_file_widget.info.sftp
-        self.loop = remote_file_widget.info.loop
-        self.new_file_msg = remote_file_widget.new_file_msg
-        self.sub_file_msg = remote_file_widget.sub_file_msg
-        self.now_remote_path = "."
+        self.sftp_tab_widget = sftp_tab_widget
+        # 开启拖放与本地文件移动支持
+        self.setAcceptDrops(True)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
-        # 新增：用于记录上一次扫描时目录的修改时间
-        self.last_mtime = None
+    def dragEnterEvent(self, event):
+        # 允许远端拖拽数据进入
+        if event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
 
-    async def check_file_changes(self):
-        """合并新文件和旧文件的检查，并使用 stat 优化网络 I/O"""
-        while True:
-            try:
-                # 1. 轻量级检查：只获取当前目录本身的元数据
-                dir_attrs = await self.sftp.stat(self.now_remote_path)
-                current_mtime = dir_attrs.mtime
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
 
-                # 如果目录修改时间没变，说明没有文件增删，直接跳过本次完整扫描
-                if self.last_mtime == current_mtime:
-                    await asyncio.sleep(1)
-                    continue
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.acceptProposedAction()
+            # 解析远端传来的路径
+            remote_paths = json.loads(
+                event.mimeData().data("application/x-quickstfp-remote-paths").data().decode('utf-8'))
 
-                self.last_mtime = current_mtime
+            # 获取当前鼠标放开的位置所在的本地目录
+            index = self.indexAt(event.position().toPoint())
+            model = self.model()
+            if index.isValid() and model.isDir(index):
+                dst_dir = model.filePath(index)
+            else:
+                # 默认放到当前根视图目录
+                dst_dir = model.filePath(self.rootIndex())
 
-                # 2. 只有时间变化时，才发起高成本的 scandir
-                now_file_entries = []
-                async for entry in self.sftp.scandir(self.now_remote_path):
-                    if entry.filename not in (".", ".."):
-                        if not self.remote_file_widget.show_hidden and entry.filename.startswith("."):
-                            continue
-                        now_file_entries.append(entry)
-
-                now_filenames = {entry.filename for entry in now_file_entries}
-                known_filenames = set(self.remote_file_widget.all_files_dict.keys())
-
-                # 3. 集合运算：计算新增的文件
-                new_files = [e for e in now_file_entries if e.filename not in known_filenames]
-                if new_files:
-                    self.new_file_msg.emit(new_files)
-
-                # 4. 集合运算：计算被删除的文件
-                sub_files = list(known_filenames - now_filenames)
-                if sub_files:
-                    self.sub_file_msg.emit(sub_files)
-
-            except Exception:
-                # 捕获异常：防止在切换目录 (chdir) 瞬间导致路径不存在而抛出异常崩溃
-                self.last_mtime = None
-
-            # 建议将此处稍微提高至 1.5 - 2 秒，肉眼感知的实时性差异不大，但能大幅降低压力
-            await asyncio.sleep(1)
-
-    def start(self):
-        # 原本启动两个独立的任务，现在只需要启动合并后的单任务
-        asyncio.run_coroutine_threadsafe(self.check_file_changes(), self.loop)
+            # 触发批量下载
+            for remote_path in remote_paths:
+                self.sftp_tab_widget.transport_control_widget.get(remote_path, dst_dir, 20)
+        else:
+            # 走原生逻辑，实现本地到本地的拖拽移动
+            super().dropEvent(event)
 
 
 class Edit(QTextEdit):
@@ -167,25 +158,24 @@ class FileSelect(QWidget):
 class LocalFileWidget(QWidget):
     """
     本地文件系统浏览器。
-    使用 QFileSystemModel 自动加载系统文件，并支持将其拖拽出去。
+    已适配本地文件内部拖动，并接收远端文件的下载拖放。
     """
 
-    def __init__(self):
+    def __init__(self, sftp_tab_widget: 'SFTPTabWidget'):  # 【修改】：增加 sftp_tab_widget 参数
         super().__init__()
+        self.sftp_tab_widget = sftp_tab_widget
+
         # 1. 初始化本地文件系统模型
         self.model = QFileSystemModel()
         self.model.setRootPath(QDir.rootPath())
+        self.model.setReadOnly(False)  # 【核心修改】：关闭只读模式以支持原生本地文件的拖放移动
 
-        # 2. 初始化树形视图
-        self.tree = QTreeView()
+        # 2. 初始化树形视图 (使用修改后的自定义 View)
+        self.tree = LocalFileTreeView(self.sftp_tab_widget)
         self.tree.setModel(self.model)
-        # 默认从用户的家目录开始显示 (Windows 是 C:\Users\xxx, Mac/Linux 是 /home/xxx)
         self.tree.setRootIndex(self.model.index(QDir.homePath()))
 
-        # 开启拖拽支持：允许将本地文件直接拖拽出去
-        self.tree.setDragEnabled(True)
-
-        # 优化显示：隐藏多余的列，只保留文件名（类似于只看名字），如果你想看大小和修改日期，可以注释掉下面这行
+        # 优化显示：隐藏多余的列
         for i in range(1, 4): self.tree.hideColumn(i)
 
         # 3. 顶部路径与控制栏
@@ -196,7 +186,6 @@ class LocalFileWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # 布局组装
         hbox = QHBoxLayout()
         hbox.addWidget(self.up_button)
         hbox.addWidget(self.path_edit)
@@ -207,19 +196,16 @@ class LocalFileWidget(QWidget):
         vbox.addWidget(self.tree)
         self.setLayout(vbox)
 
-        # 信号连接
         self.tree.doubleClicked.connect(self.on_double_click)
         self.up_button.clicked.connect(self.go_up)
 
     def on_double_click(self, index: QModelIndex):
-        """双击文件夹时，进入该文件夹"""
         path = self.model.filePath(index)
         if self.model.isDir(index):
             self.tree.setRootIndex(index)
             self.path_edit.setText(path)
 
     def go_up(self):
-        """返回上一级目录"""
         current_path = self.path_edit.text()
         parent_dir = QDir(current_path)
         if parent_dir.cdUp():
@@ -244,8 +230,8 @@ class NumericSortItem(QStandardItem):
 
 
 class RemoteFileWidget(QTreeView):
-    new_file_msg = Signal(list)
-    sub_file_msg = Signal(list)
+    # 【修改】：删除了原有的 new_file_msg 和 sub_file_msg
+    current_folder_loaded_msg = Signal(list)
     path_change_msg = Signal(str)
     sub_folder_loaded_msg = Signal(QModelIndex, list)
 
@@ -255,44 +241,45 @@ class RemoteFileWidget(QTreeView):
         self.FILE_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
 
-        # --- 使用标准数据模型绑定 QTreeView ---
         self.model = QStandardItemModel()
-        # 修改 1：添加多列表头
         self.model.setHorizontalHeaderLabels(["名称", "大小", "类型", "修改时间", "权限"])
         self.setModel(self.model)
 
-        # 取消隐藏表头（如果原来隐藏了的话）
         self.setHeaderHidden(False)
-
-        # 修改 2：恢复整行选中，体验更好
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-
-        # 修改 3：开启表头点击排序功能，默认按第一列(名称)升序排
         self.setSortingEnabled(True)
         self.header().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-
-        # 让“名称”列的宽度稍微大一点
         self.setColumnWidth(0, 200)
 
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setExpandsOnDoubleClick(False)  # 关闭双击自动展开
 
         self.move_paths = []
         self.copy_paths = []
         self.info = sftp_tab_widget.info
         self.all_files_dict = dict()
         self.show_hidden = False
-        self.monitor = MonitorRemoteFileChange(self)
         self.init_ui()
 
+    def init_ui(self):
+        # 【修改】：绑定拉取当前文件夹内容的信号
+        self.current_folder_loaded_msg.connect(self.add_new_file)
+        self.doubleClicked.connect(self.double_item)
+        self.expanded.connect(self.on_item_expanded)
+        self.sub_folder_loaded_msg.connect(self.on_sub_folder_loaded)
+
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.viewport().setAcceptDrops(True)
+
     def get_item_path(self, item: QStandardItem) -> str:
-        """从 UserRole 中提取之前存入的绝对路径"""
         path = item.data(Qt.ItemDataRole.UserRole)
         return path if path else self.info.realpath(item.text())
 
     def selectedItems(self):
-        """兼容底层原有的多选获取逻辑"""
         indexes = self.selectionModel().selectedIndexes()
-        # 过滤掉其他列，只返回第一列的 Item
         return [self.model.itemFromIndex(idx) for idx in indexes if idx.column() == 0]
 
     def set_menu(self):
@@ -333,11 +320,72 @@ class RemoteFileWidget(QTreeView):
             rename_action = context_menu.addAction("重命名")
             rename_action.triggered.connect(lambda: self.rename(item))
 
-            # 高级属性修改
             chmod_action = context_menu.addAction("属性/权限")
             chmod_action.triggered.connect(lambda: self.change_permissions(item))
 
         context_menu.exec(self.mapToGlobal(pos))
+
+    # ==================== 核心修改：手动拉取与事件驱动 ====================
+    def refresh(self):
+        """完全清空当前列表，并调度后台协程拉取最新内容"""
+        self.model.removeRows(0, self.model.rowCount())
+        self.all_files_dict.clear()
+        # 兼容 TransportTargetWidget 使用 abspath
+        target_path = getattr(self, 'abspath', self.info.getcwd())
+        asyncio.run_coroutine_threadsafe(self.fetch_current_dir(target_path), self.info.loop)
+
+    async def fetch_current_dir(self, path: str):
+        """在后台执行 scandir 网络请求"""
+        try:
+            entries = []
+            async for entry in self.info.sftp.scandir(path):
+                if entry.filename not in (".", ".."):
+                    if not self.show_hidden and entry.filename.startswith("."):
+                        continue
+                    entries.append(entry)
+            self.current_folder_loaded_msg.emit(entries)
+        except Exception as e:
+            print(f"拉取目录失败 (权限不足或路径不存在): {e}")
+
+    def rename(self, item: QStandardItem) -> None:
+        text, ok = QInputDialog.getText(self, "重命名", "输入新的文件名", QLineEdit.EchoMode.Normal, item.text())
+        if ok and text:
+            try:
+                self.info.rename(item.text(), str(text))
+                self.refresh()  # 操作成功后手动刷新
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"重命名失败:\n{e}")
+
+    def makedir(self) -> None:
+        text, ok = QInputDialog.getText(self, "新建", "输入文件夹名")
+        if ok and text:
+            try:
+                self.info.makedirs(str(text))
+                self.refresh()
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"新建文件夹失败:\n{e}")
+
+    def new_file(self) -> None:
+        text, ok = QInputDialog.getText(self, "新建", "输入文件名")
+        if ok and text:
+            try:
+                self.info.save_file(str(text), "")
+                self.refresh()
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"新建文件失败:\n{e}")
+
+    def del_item(self, item: QStandardItem) -> None:
+        src = self.get_item_path(item)
+        try:
+            self.info.del_file(src)
+            # 删除成功后，直接从 UI 抹除这一行（不进行全局闪烁刷新）
+            self.model.removeRow(item.row())
+            if item.text() in self.all_files_dict:
+                self.all_files_dict.pop(item.text())
+        except Exception as e:
+            QMessageBox.warning(self, "失败", f"删除失败:\n{e}")
+
+    # =======================================================================
 
     def change_permissions(self, item: QStandardItem):
         path = self.get_item_path(item)
@@ -349,39 +397,30 @@ class RemoteFileWidget(QTreeView):
                 if new_perms != current_perms:
                     self.info.chmod(path, new_perms)
                     QMessageBox.information(self, "成功", f"【{item.text()}】权限修改成功！")
+                    self.refresh()
         except Exception as e:
             QMessageBox.warning(self, "操作失败", f"无法获取或修改文件权限:\n{e}")
-
-    def refresh(self):
-        self.model.removeRows(0, self.model.rowCount())
-        self.all_files_dict.clear()
-        self.monitor.last_mtime = None
-
-    def rename(self, item: QStandardItem) -> None:
-        text, ok = QInputDialog.getText(self, "重命名", "输入新的文件名")
-        if ok:
-            self.info.rename(item.text(), str(text))
 
     def paste_items(self) -> None:
         for old_path in self.copy_paths:
             self.info.copy_file(old_path, self.info.getcwd())
         self.copy_paths.clear()
+        self.refresh()
 
     def put_items(self) -> None:
         failed_msgs = []
         for item, old_path in self.move_paths:
             try:
                 self.info.move_file(old_path, self.info.getcwd())
-                self.setRowHidden(item.row(), QModelIndex(), False)  # 取消隐藏
+                self.setRowHidden(item.row(), QModelIndex(), False)
             except Exception as e:
                 failed_msgs.append(f"{old_path} -> {str(e)}")
-                self.setRowHidden(item.row(), QModelIndex(), False)  # 移动失败也取消隐藏
+                self.setRowHidden(item.row(), QModelIndex(), False)
 
         if failed_msgs:
-            error_details = "\n".join(failed_msgs)
-            QMessageBox.warning(self, "移动失败", f"以下文件移动失败，可能权限不足:\n{error_details}")
-
+            QMessageBox.warning(self, "移动失败", "以下文件移动失败，可能权限不足:\n" + "\n".join(failed_msgs))
         self.move_paths.clear()
+        self.refresh()
 
     def download_items(self) -> None:
         for item in self.selectedItems():
@@ -399,87 +438,45 @@ class RemoteFileWidget(QTreeView):
             for item in self.selectedItems():
                 self.del_item(item)
 
-    def del_item(self, item: QStandardItem) -> None:
-        src = self.get_item_path(item)  # 替换
-        self.info.del_file(src)
-
-    def makedir(self) -> None:
-        text, ok = QInputDialog.getText(self, "新建", "输入文件夹名")
-        if ok:
-            self.info.makedirs(str(text))
-
-    def new_file(self) -> None:
-        text, ok = QInputDialog.getText(self, "新建", "输入文件名")
-        if ok:
-            self.info.save_file(str(text), "")
-
-    def init_ui(self):
-        self.new_file_msg.connect(self.add_new_file)
-        self.sub_file_msg.connect(self.del_sub_file)
-        self.doubleClicked.connect(self.double_item)
-        self.expanded.connect(self.on_item_expanded)
-        self.sub_folder_loaded_msg.connect(self.on_sub_folder_loaded)
-
-        self.monitor.start()
-        self.monitor.start()
-
-        # 开启拖放支持
-        self.setAcceptDrops(True)
-        self.viewport().setAcceptDrops(True)
-
     def on_item_expanded(self, index: QModelIndex):
-        """当用户点击树形目录的展开箭头时触发"""
         name_index = index.siblingAtColumn(0)
         item = self.model.itemFromIndex(name_index)
 
-        if not item or not item.hasChildren():
-            return
-
-        # 检查是否是占位符
+        if not item or not item.hasChildren(): return
         child = item.child(0, 0)
         if child and child.text() == "加载中...":
             path = self.get_item_path(item)
-            # 调度到 asyncssh 的事件循环中异步获取远端文件，防止阻塞 UI
             asyncio.run_coroutine_threadsafe(self.fetch_sub_dir(name_index, path), self.info.loop)
 
     async def fetch_sub_dir(self, parent_index: QModelIndex, path: str):
-        """后台异步执行远端 scandir 操作"""
         try:
             entries = []
             async for entry in self.info.sftp.scandir(path):
                 if entry.filename not in (".", ".."):
-                    # 兼容隐藏文件过滤开关
-                    if hasattr(self, 'show_hidden') and not self.show_hidden and entry.filename.startswith("."):
+                    if not self.show_hidden and entry.filename.startswith("."):
                         continue
                     entries.append(entry)
             self.sub_folder_loaded_msg.emit(parent_index, entries)
-        except Exception as e:
-            # 权限不足等错误时返回空列表
+        except Exception:
             self.sub_folder_loaded_msg.emit(parent_index, [])
 
     @Slot(QModelIndex, list)
     def on_sub_folder_loaded(self, parent_index: QModelIndex, entries: list):
-        """拿到后台数据后，在主线程更新 UI 树节点"""
         item = self.model.itemFromIndex(parent_index)
         if not item: return
 
-        # 清除“加载中...”占位符
         item.removeRows(0, item.rowCount())
         parent_path = self.get_item_path(item)
 
-        # 对子文件进行排序：文件夹优先，同类按名称排序
         entries.sort(key=lambda x: (x.attrs.type != 2, x.filename))
 
         for entry in entries:
             is_dir = (entry.attrs.type == 2)
             name_item = QStandardItem(entry.filename)
             name_item.setIcon(self.DIR_ICON if is_dir else self.FILE_ICON)
-
-            # --- 关键：保存该文件的绝对路径，防止多级目录路径错乱 ---
             full_path = f"{parent_path}/{entry.filename}".replace("//", "/")
             name_item.setData(full_path, Qt.ItemDataRole.UserRole)
 
-            # [构建其他列：结合之前多列表头的方案]
             size_val = getattr(entry.attrs, 'size', 0)
             size_item = NumericSortItem("", -1) if is_dir else NumericSortItem(self.format_size(size_val), size_val)
             type_item = QStandardItem("文件夹" if is_dir else "文件")
@@ -493,80 +490,43 @@ class RemoteFileWidget(QTreeView):
             perm_item = QStandardItem(perm_str)
 
             row_items = [name_item, size_item, type_item, mtime_item, perm_item]
-
-            # 如果依然是文件夹，给它塞入下一级“加载中...”占位符，支持无限套娃展开
             if is_dir:
                 dummy = QStandardItem("加载中...")
                 name_item.appendRow([dummy, QStandardItem(""), QStandardItem(""), QStandardItem(""), QStandardItem("")])
 
             item.appendRow(row_items)
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-            urls = event.mimeData().urls()
-            for url in urls:
-                local_path = url.toLocalFile()
-                if local_path:
-                    self.sftp_tab_widget.transport_control_widget.put(
-                        local_path, self.info.getcwd(), 20
-                    )
-        else:
-            super().dropEvent(event)
-
     @Slot(list)
     def add_new_file(self, new_files: list):
+        """收到最新目录拉取的结果后进行渲染"""
         for entry in new_files:
             filename = entry.filename
             if filename in self.all_files_dict:
                 continue
 
             is_dir = (entry.attrs.type == 2)
-
-            # 第1列: 名称
             name_item = QStandardItem(filename)
             name_item.setIcon(self.DIR_ICON if is_dir else self.FILE_ICON)
 
-            full_path = self.info.realpath(filename)
+            # 兼容：如果设置了 abspath 说明是在 TargetWidget 里
+            base_path = getattr(self, 'abspath', self.info.getcwd())
+            full_path = f"{base_path}/{filename}".replace("//", "/")
             name_item.setData(full_path, Qt.ItemDataRole.UserRole)
 
-            # 第2列: 大小 (使用自定义数字排序 Item)
             size_val = getattr(entry.attrs, 'size', 0)
-            if is_dir:
-                size_item = NumericSortItem("", -1)  # 文件夹大小置空，排序值设为-1置顶/沉底
-            else:
-                size_item = NumericSortItem(self.format_size(size_val), size_val)
-
-            # 第3列: 类型
+            size_item = NumericSortItem("", -1) if is_dir else NumericSortItem(self.format_size(size_val), size_val)
             type_item = QStandardItem("文件夹" if is_dir else "文件")
 
-            # 第4列: 修改时间 (使用自定义数字排序 Item，按照时间戳排序)
             mtime_val = getattr(entry.attrs, 'mtime', 0)
             mtime_str = datetime.datetime.fromtimestamp(mtime_val).strftime('%Y-%m-%d %H:%M:%S') if mtime_val else ""
             mtime_item = NumericSortItem(mtime_str, mtime_val)
 
-            # 第5列: 权限 (将十进制 mode 转换为标准的 rwxrwxrwx)
             perms_val = getattr(entry.attrs, 'permissions', 0)
             perm_str = stat.filemode(perms_val) if perms_val else ""
             perm_item = QStandardItem(perm_str)
 
-            # 组装为一行
             row_items = [name_item, size_item, type_item, mtime_item, perm_item]
-
             if is_dir:
-                # ---> 新增：添加占位符提供下拉箭头
                 dummy = QStandardItem("加载中...")
                 name_item.appendRow([dummy, QStandardItem(""), QStandardItem(""), QStandardItem(""), QStandardItem("")])
                 self.model.insertRow(0, row_items)
@@ -577,29 +537,15 @@ class RemoteFileWidget(QTreeView):
 
     @staticmethod
     def format_size(size: int) -> str:
-        """字节转换为高可读性的单位"""
         if not size: return "0 B"
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024:
-                return f"{size:.2f} {unit}" if unit != 'B' else f"{size} B"
+            if size < 1024: return f"{size:.2f} {unit}" if unit != 'B' else f"{size} B"
             size /= 1024
         return f"{size:.2f} PB"
 
-    @Slot(list)
-    def del_sub_file(self, sub_files: list):
-        for file in sub_files:
-            if file not in self.all_files_dict:
-                continue
-            item = self.all_files_dict[file]
-            self.model.removeRow(item.row())
-            self.all_files_dict.pop(file)
-
     def double_item(self, index: QModelIndex):
-        if index.column() != 0:
-            index = index.siblingAtColumn(0)
+        if index.column() != 0: index = index.siblingAtColumn(0)
         item = self.model.itemFromIndex(index)
-
-        # ---> 替换获取路径的方式
         path = self.get_item_path(item)
         MAX_PREVIEW_SIZE = 5 * 1024 * 1024
 
@@ -608,12 +554,10 @@ class RemoteFileWidget(QTreeView):
                 file_size = self.info.get_file_size(path)
                 if file_size > MAX_PREVIEW_SIZE:
                     reply = QMessageBox.question(
-                        self, "文件过大",
-                        f"该文本文件体积较大（{file_size / 1024 / 1024:.2f} MB），直接在编辑器预览可能导致程序内存溢出或卡死。\n\n是否将其下载到本地查看？",
+                        self, "文件过大", f"文件较大（{file_size / 1024 / 1024:.2f} MB），是否下载？",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                     )
-                    if reply == QMessageBox.StandardButton.Yes:
-                        self.download_item(item)
+                    if reply == QMessageBox.StandardButton.Yes: self.download_item(item)
                     return
                 text = self.info.read_file(path)
                 edit = Edit(self, self.info.realpath(path), text)
@@ -621,23 +565,106 @@ class RemoteFileWidget(QTreeView):
             else:
                 self.path_change_msg.emit(self.info.realpath(path))
                 self.info.chdir(path)
+                self.refresh()  # 进入新目录后主动拉取刷新
         except Exception as e:
-            QMessageBox.warning(self, "操作失败", f"无法打开文件或进入该目录。\n错误信息: {e}")
+            QMessageBox.warning(self, "操作失败", f"无法操作:\n{e}")
 
     def move_items(self) -> None:
         for item in self.selectedItems():
-            self.move_item(item)
-
-    def move_item(self, item: QStandardItem) -> None:
-        self.setRowHidden(item.row(), item.parent().index() if item.parent() else QModelIndex(), True)
-        self.move_paths.append((item, self.get_item_path(item)))  # 替换
+            self.setRowHidden(item.row(), item.parent().index() if item.parent() else QModelIndex(), True)
+            self.move_paths.append((item, self.get_item_path(item)))
 
     def copy_items(self) -> None:
         for item in self.selectedItems():
-            self.copy_item(item)
+            self.copy_paths.append(self.get_item_path(item))
 
-    def copy_item(self, item: QStandardItem) -> None:
-        self.copy_paths.append(self.get_item_path(item))  # 替换
+    # --- 拖拽与缩略图逻辑保持之前的增强版本即可 ---
+    def startDrag(self, supportedActions):
+        items = self.selectedItems()
+        if not items: return
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        paths = [self.get_item_path(item) for item in items]
+        encoded_data = json.dumps(paths).encode('utf-8')
+        mime_data.setData("application/x-quickstfp-remote-paths", QByteArray(encoded_data))
+        drag.setMimeData(mime_data)
+
+        if len(items) == 1:
+            item = items[0]
+            pixmap = QPixmap(200, 30)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            icon = item.icon()
+            if not icon.isNull(): icon.paint(painter, QRect(0, 5, 20, 20))
+            painter.setPen(Qt.GlobalColor.black)
+            painter.drawText(QRect(25, 5, 175, 20), Qt.AlignmentFlag.AlignVCenter, item.text())
+            painter.end()
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QPoint(10, 15))
+        else:
+            text = f"移动 {len(items)} 个项目"
+            pixmap = QPixmap(150, 30)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setBrush(Qt.GlobalColor.lightGray)
+            painter.setPen(Qt.GlobalColor.NoPen)
+            painter.drawRoundedRect(0, 0, 150, 30, 5, 5)
+            painter.setPen(Qt.GlobalColor.black)
+            painter.drawText(QRect(0, 0, 150, 30), Qt.AlignmentFlag.AlignCenter, text)
+            painter.end()
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QPoint(75, 15))
+
+        drag.exec(supportedActions)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.accept()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.accept()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+            urls = event.mimeData().urls()
+            index = self.indexAt(event.position().toPoint())
+            dst_path = self.info.getcwd()
+            if index.isValid():
+                item = self.model.itemFromIndex(index.siblingAtColumn(0))
+                type_item = self.model.itemFromIndex(index.siblingAtColumn(2))
+                if item and type_item and type_item.text() == "文件夹": dst_path = self.get_item_path(item)
+            for url in urls:
+                local_path = url.toLocalFile()
+                if local_path: self.sftp_tab_widget.transport_control_widget.put(local_path, dst_path, 20)
+
+        elif event.mimeData().hasFormat("application/x-quickstfp-remote-paths"):
+            event.accept()
+            remote_paths = json.loads(
+                event.mimeData().data("application/x-quickstfp-remote-paths").data().decode('utf-8'))
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                item = self.model.itemFromIndex(index.siblingAtColumn(0))
+                type_item = self.model.itemFromIndex(index.siblingAtColumn(2))
+                if item and type_item and type_item.text() == "文件夹":
+                    dst_path = self.get_item_path(item)
+                    for src_path in remote_paths:
+                        if src_path != dst_path:
+                            try:
+                                self.info.move_file(src_path, dst_path)
+                                filename = src_path.split('/')[-1]
+                                if filename in self.all_files_dict:
+                                    moved_item = self.all_files_dict.pop(filename)
+                                    self.model.removeRow(moved_item.row())
+                            except Exception as e:
+                                QMessageBox.warning(self, "移动失败", f"{src_path} 移动失败:\n{e}")
+        else:
+            super().dropEvent(event)
 
 
 class TransportTargetWidget(RemoteFileWidget):
@@ -648,19 +675,20 @@ class TransportTargetWidget(RemoteFileWidget):
         self.chdir(self.info.getcwd())
 
     def double_item(self, index: QModelIndex):
-        item = self.model.itemFromIndex(index)  # <--- 修改这一行即可
+        item = self.model.itemFromIndex(index)
         path = item.text()
         try:
-            if not self.info.is_file(path):
-                new_path = os.path.join(self.abspath, path).replace("\\", "/")
-                self.chdir(new_path)
+            # 这里的 info.is_file 可能会误判目标面板的状态，我们直接尝试 chdir 即可
+            new_path = os.path.join(self.abspath, path).replace("\\", "/")
+            self.chdir(new_path)
         except Exception as e:
             QMessageBox.warning(self, "访问失败", f"无法进入目标目录:\n{e}")
 
     def chdir(self, path: str):
         self.path_change_msg.emit(path)
         self.abspath = path
-        self.monitor.now_remote_path = path
+        # 只要目录变动，主动触发拉取更新 UI
+        self.refresh()
 
 
 class SelectRemoteFileWidget(QWidget):
@@ -831,7 +859,7 @@ class UserSFTPWidget(QWidget):
         self.info = sftp_tab_widget.info
 
         # --- 左侧：全新的本地文件面板 ---
-        self.local_file_widget = LocalFileWidget()
+        self.local_file_widget = LocalFileWidget(self.sftp_tab_widget)
 
         # --- 右侧：原有的远端文件面板 ---
         self.remote_file_widget = RemoteFileWidget(sftp_tab_widget)
@@ -853,6 +881,7 @@ class UserSFTPWidget(QWidget):
         self.show_hidden_btn.setCheckable(True)
 
         self.init_ui()
+        self.remote_file_widget.refresh()
 
     def init_ui(self):
         self.remote_file_widget.set_menu()
