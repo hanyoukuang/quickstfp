@@ -3,12 +3,19 @@ import asyncio
 import datetime
 import json
 import os
-import stat
+import re  # 新增
 import shutil
-
+import stat
+import tempfile
+from PySide6.QtCore import QFileInfo  # 新增
+from PySide6.QtWidgets import QFileIconProvider  # 新增
+from PySide6.QtCore import QFileSystemWatcher, QUrl, QObject
 from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir, QMimeData, QByteArray, QRect, QPoint
 from PySide6.QtGui import QCloseEvent, QDrag, QPixmap, QPainter
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QStandardItemModel, QStandardItem
+# 在原来的 PySide6.QtGui 导入中增加以下类:
+from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PySide6.QtWidgets import (
     QListWidget, QStyle, QApplication, QListWidgetItem, QPushButton,
     QMessageBox, QSplitter, QHBoxLayout, QStackedWidget, QLineEdit,
@@ -23,6 +30,9 @@ from core.transport import GET, PUT
 from ui.components.progress_bar import ProgressBar
 from ui.components.terminal_widget import SSHPtyWidget
 from utils.file_utils import is_binary
+
+
+# 在原来的 PySide6.QtGui 导入中增加以下类:
 
 
 class LocalFileTreeView(QTreeView):
@@ -76,6 +86,50 @@ class LocalFileTreeView(QTreeView):
             super().dropEvent(event)
 
 
+class SimpleHighlighter(QSyntaxHighlighter):
+    """一个简单的语法高亮器（支持常见关键字、字符串和注释高亮）"""
+
+    def __init__(self, document):
+        super().__init__(document)
+
+        # 1. 关键字高亮样式 (蓝色加粗)
+        self.keyword_format = QTextCharFormat()
+        self.keyword_format.setForeground(QColor("darkBlue"))
+        self.keyword_format.setFontWeight(QFont.Weight.Bold)
+
+        keywords = [
+            r'\bdef\b', r'\bclass\b', r'\bimport\b', r'\bfrom\b', r'\bas\b',
+            r'\bif\b', r'\belif\b', r'\belse\b', r'\bwhile\b', r'\bfor\b', r'\bin\b',
+            r'\breturn\b', r'\bpass\b', r'\bbreak\b', r'\bcontinue\b', r'\byield\b',
+            r'\bTrue\b', r'\bFalse\b', r'\bNone\b', r'\band\b', r'\bor\b', r'\bnot\b',
+            r'\btry\b', r'\bexcept\b', r'\bfinally\b', r'\bwith\b', r'\basync\b', r'\bawait\b'
+        ]
+        self.rules = [(re.compile(kw), self.keyword_format) for kw in keywords]
+
+        # 2. 注释高亮样式 (灰色斜体)
+        self.comment_format = QTextCharFormat()
+        self.comment_format.setForeground(QColor("gray"))
+        self.comment_format.setFontItalic(True)
+        self.comment_rule = re.compile(r'#.*')
+
+        # 3. 字符串高亮样式 (深绿色)
+        self.string_format = QTextCharFormat()
+        self.string_format.setForeground(QColor("darkGreen"))
+        self.string_rule = re.compile(r'".*?"|\'.*?\'')
+
+    def highlightBlock(self, text):
+        # 匹配关键字
+        for pattern, fmt in self.rules:
+            for match in pattern.finditer(text):
+                self.setFormat(match.start(), match.end() - match.start(), fmt)
+        # 匹配字符串
+        for match in self.string_rule.finditer(text):
+            self.setFormat(match.start(), match.end() - match.start(), self.string_format)
+        # 匹配单行注释
+        for match in self.comment_rule.finditer(text):
+            self.setFormat(match.start(), match.end() - match.start(), self.comment_format)
+
+
 class Edit(QTextEdit):
     def __init__(self, remote_file_widget: 'RemoteFileWidget', path: str, text: str):
         super().__init__(parent=remote_file_widget)
@@ -85,14 +139,111 @@ class Edit(QTextEdit):
         self.setText(text)
         self.setWindowFlags(Qt.WindowType.Tool)
 
+        # === 附加语法高亮 ===
+        self.highlighter = SimpleHighlighter(self.document())
+
+    def keyPressEvent(self, event):
+        # === 捕获 Ctrl + S 并执行保存逻辑 ===
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_S:
+            self.save_file_action()
+        else:
+            # 否则执行默认键盘事件
+            super().keyPressEvent(event)
+
+    def save_file_action(self):
+        """单独抽离的保存逻辑"""
+        now_text = self.toPlainText()
+        if now_text == self.original_text:
+            # 未修改无需保存
+            return
+
+        try:
+            self.info.save_file(self.path, now_text)
+            self.original_text = now_text  # 覆盖原始记录
+            QMessageBox.information(self, "成功", "文件已快捷保存！")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"保存失败:\n{e}")
+
     def closeEvent(self, event: QCloseEvent):
         now_text = self.toPlainText()
         if now_text == self.original_text:
             return
+
         reply = QMessageBox.question(self, "文件", "文件有改动，是否保存",
                                      QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         if reply == QMessageBox.StandardButton.Ok:
-            self.info.save_file(self.path, now_text)
+            self.save_file_action()
+
+
+class ExternalEditorWatcher(QObject):
+    """
+    外部编辑器监控类：
+    负责将远端文件写入本地临时目录，调用系统默认程序打开，
+    并监控文件的修改事件（Ctrl+S），一旦触发则自动同步回远端服务器。
+    """
+
+    def __init__(self, sftp_info):
+        super().__init__()
+        self.info = sftp_info
+        self.watcher = QFileSystemWatcher()
+        self.watcher.fileChanged.connect(self.on_file_changed)
+
+        # 映射：本地临时路径 -> 远端实际路径
+        self.file_map = {}
+        # 创建根级临时目录
+        self.temp_dir = tempfile.mkdtemp(prefix="quickstfp_ext_")
+
+    def cleanup_temp_files(self):
+        """清理当前会话产生的所有外部编辑临时文件"""
+        if os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+                print(f"已清理外部编辑临时目录: {self.temp_dir}")
+            except Exception as e:
+                print(f"清理临时目录失败: {e}")
+
+    def open_in_external_editor(self, remote_path: str, content: str):
+        filename = os.path.basename(remote_path)
+        # 为每个文件创建一个独立的临时子目录，防止多开同名文件造成冲突
+        sub_dir = tempfile.mkdtemp(dir=self.temp_dir)
+        local_path = os.path.join(sub_dir, filename)
+
+        # 1. 写入本地临时文件
+        with open(local_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        # 2. 记录映射关系并加入文件系统监控
+        self.file_map[local_path] = remote_path
+        self.watcher.addPath(local_path)
+
+        # 3. 唤起操作系统默认程序 (例如 .py 会唤起 VSCode 或 PyCharm)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(local_path))
+
+    @Slot(str)
+    def on_file_changed(self, local_path: str):
+        if local_path in self.file_map:
+            remote_path = self.file_map[local_path]
+            try:
+                # 检查文件是否依然存在（防止某些编辑器保存时的删除行为导致报错）
+                if not os.path.exists(local_path):
+                    return
+
+                # 读取本地最新修改的内容
+                with open(local_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # 触发底层同步回远端
+                self.info.save_file(remote_path, content)
+                print(f"[{os.path.basename(remote_path)}] 外部修改已自动同步到远端！")
+
+            except Exception as e:
+                print(f"同步远端文件失败: {e}")
+            finally:
+                # 【核心修复】：许多现代编辑器（如 VSCode, Vim）在保存时是“原子保存”
+                # 即先写入一个新文件，再替换旧文件。这会导致 QFileSystemWatcher 丢失对 inode 的监控。
+                # 解决方案：如果在保存后发现监控丢失，重新将其加回 watcher
+                if local_path not in self.watcher.files() and os.path.exists(local_path):
+                    self.watcher.addPath(local_path)
 
 
 class PermissionDialog(QDialog):
@@ -231,6 +382,9 @@ class LocalFileWidget(QWidget):
         new_folder_action = menu.addAction("新建文件夹")
         new_folder_action.triggered.connect(lambda *args: self.new_folder(index))
 
+        new_file_action = menu.addAction("新建文件")
+        new_file_action.triggered.connect(lambda *args: self.new_file(index))
+
         if index.isValid():
             menu.addSeparator()
             rename_action = menu.addAction("重命名")
@@ -252,6 +406,25 @@ class LocalFileWidget(QWidget):
             paste_action.triggered.connect(lambda *args: self.paste_items(index))
 
         menu.exec(self.tree.mapToGlobal(pos))
+
+    def new_file(self, index: QModelIndex):
+        # 确定新建文件的目标目录
+        if index.isValid() and self.model.isDir(index):
+            target_dir = self.model.filePath(index)
+        else:
+            parent_dir = os.path.dirname(self.model.filePath(index)) if index.isValid() else self.model.filePath(
+                self.tree.rootIndex())
+            target_dir = parent_dir
+
+        text, ok = QInputDialog.getText(self, "新建文件", "输入带有扩展名的文件名 (如 test.txt)")
+        if ok and text:
+            new_path = os.path.join(target_dir, text)
+            try:
+                # 在本地创建一个空文件
+                with open(new_path, 'w', encoding='utf-8') as f:
+                    pass
+            except Exception as e:
+                QMessageBox.warning(self, "失败", f"新建文件失败:\n{e}")
 
     def new_folder(self, index: QModelIndex):
         # 确定新建文件夹的目标目录
@@ -386,6 +559,8 @@ class RemoteFileWidget(QTreeView):
         self.sftp_tab_widget = sftp_tab_widget
         self.FILE_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        self.icon_provider = QFileIconProvider()
+        self.icon_cache = {}
 
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["名称", "大小", "类型", "修改时间", "权限"])
@@ -405,6 +580,7 @@ class RemoteFileWidget(QTreeView):
         self.info = sftp_tab_widget.info
         self.all_files_dict = dict()
         self.show_hidden = False
+        self.external_watcher = ExternalEditorWatcher(self.info)
         self.init_ui()
 
     def init_ui(self):
@@ -419,6 +595,48 @@ class RemoteFileWidget(QTreeView):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.viewport().setAcceptDrops(True)
+
+    def get_file_icon(self, filename: str):
+        """获取系统关联的文件图标：通过真实创建临时文件来骗过系统获取图标"""
+        # os.path.splitext 对于 ".gitignore" 或 "Dockerfile" 这种文件，切出来的 ext 是空的
+        name, ext = os.path.splitext(filename)
+        ext = ext.lower()
+
+        # 如果有后缀名，则以后缀名作为缓存键（如 .cpp）
+        # 如果没有后缀名（或者本身就是隐藏文件如 .gitignore），则以完整文件名作为缓存键
+        cache_key = ext if ext else filename.lower()
+
+        if cache_key not in self.icon_cache:
+            # 在临时目录创建一个专属文件夹
+            temp_dir = tempfile.mkdtemp(prefix="quickstfp_icon_")
+
+            # 还原一个带精确后缀或精确文件名的文件
+            temp_filename = f"dummy{cache_key}" if ext else cache_key
+            temp_file_path = os.path.join(temp_dir, temp_filename)
+
+            try:
+                # 触摸 (Touch) 创建一个真实存在于硬盘上的空文件
+                with open(temp_file_path, 'w', encoding='utf-8') as f:
+                    pass
+
+                # 此时文件真实存在，系统会老老实实交出它关联的图标
+                icon = self.icon_provider.icon(QFileInfo(temp_file_path))
+
+                # 存入缓存
+                self.icon_cache[cache_key] = icon if not icon.isNull() else self.FILE_ICON
+            except Exception:
+                self.icon_cache[cache_key] = self.FILE_ICON
+            finally:
+                # 取完图标后立刻“毁尸灭迹”，不留垃圾文件
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+                    if os.path.exists(temp_dir):
+                        os.rmdir(temp_dir)
+                except Exception:
+                    pass
+
+        return self.icon_cache[cache_key]
 
     def get_item_path(self, item: QStandardItem) -> str:
         path = item.data(Qt.ItemDataRole.UserRole)
@@ -446,12 +664,16 @@ class RemoteFileWidget(QTreeView):
         refresh_action.triggered.connect(self.refresh)
 
         if item:
-            edit_action = context_menu.addAction("打开")
+            # === 修改这里：区分内置和外部编辑器 ===
+            edit_action = context_menu.addAction("内置编辑器打开")
+            ext_edit_action = context_menu.addAction("外部程序编辑")
             del_action = context_menu.addAction("删除")
             move_action = context_menu.addAction("移动")
             copy_action = context_menu.addAction("复制")
             download_action = context_menu.addAction("下载")
+
             edit_action.triggered.connect(lambda: self.double_item(index))
+            ext_edit_action.triggered.connect(lambda: self.open_external(index))
             del_action.triggered.connect(self.del_items)
             move_action.triggered.connect(self.move_items)
             copy_action.triggered.connect(self.copy_items)
@@ -476,6 +698,32 @@ class RemoteFileWidget(QTreeView):
             chmod_action.triggered.connect(lambda: self.change_permissions(item))
 
         context_menu.exec(self.mapToGlobal(pos))
+
+    def open_external(self, index: QModelIndex):
+        if index.column() != 0:
+            index = index.siblingAtColumn(0)
+        item = self.model.itemFromIndex(index)
+        path = self.get_item_path(item)
+        MAX_PREVIEW_SIZE = 5 * 1024 * 1024
+
+        try:
+            if self.info.is_file(path) and (not is_binary(path)):
+                file_size = self.info.get_file_size(path)
+                if file_size > MAX_PREVIEW_SIZE:
+                    reply = QMessageBox.question(
+                        self, "文件过大", f"文件较大（{file_size / 1024 / 1024:.2f} MB），建议直接下载，是否继续拉取？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.No:
+                        return
+
+                # 获取文件文本并交由 ExternalEditorWatcher 处理
+                text = self.info.read_file(path)
+                self.external_watcher.open_in_external_editor(path, text)
+            else:
+                QMessageBox.warning(self, "无法编辑", "外部编辑目前仅支持文本代码文件。")
+        except Exception as e:
+            QMessageBox.warning(self, "操作失败", f"无法操作外部编辑器:\n{e}")
 
     # ==================== 核心修改：手动拉取与事件驱动 ====================
     def refresh(self):
@@ -663,7 +911,8 @@ class RemoteFileWidget(QTreeView):
         for entry in entries:
             is_dir = (entry.attrs.type == 2)
             name_item = QStandardItem(entry.filename)
-            name_item.setIcon(self.DIR_ICON if is_dir else self.FILE_ICON)
+            # === 修改：如果是文件，去获取关联的系统外部程序图标 ===
+            name_item.setIcon(self.DIR_ICON if is_dir else self.get_file_icon(entry.filename))
             full_path = f"{parent_path}/{entry.filename}".replace("//", "/")
             name_item.setData(full_path, Qt.ItemDataRole.UserRole)
 
@@ -696,7 +945,8 @@ class RemoteFileWidget(QTreeView):
 
             is_dir = (entry.attrs.type == 2)
             name_item = QStandardItem(filename)
-            name_item.setIcon(self.DIR_ICON if is_dir else self.FILE_ICON)
+            # === 修改：如果是文件，去获取关联的系统外部程序图标 ===
+            name_item.setIcon(self.DIR_ICON if is_dir else self.get_file_icon(filename))
 
             # 兼容：如果设置了 abspath 说明是在 TargetWidget 里
             base_path = getattr(self, 'abspath', self.info.getcwd())
@@ -1328,6 +1578,7 @@ class SFTPTabWidget(QWidget):
         super().closeEvent(event)
 
         # 使用新增加的优雅退出方法清理所有连接和挂起的 Task
+        self.user_sftp_widget.remote_file_widget.external_watcher.cleanup_temp_files()
         self.info.close_session()
 
         # 退出 QThread
