@@ -7,8 +7,8 @@ import re  # 新增
 import shutil
 import stat
 import tempfile
+
 from PySide6.QtCore import QFileInfo  # 新增
-from PySide6.QtWidgets import QFileIconProvider  # 新增
 from PySide6.QtCore import QFileSystemWatcher, QUrl, QObject
 from PySide6.QtCore import Qt, QModelIndex, Signal, Slot, QDir, QMimeData, QByteArray, QRect, QPoint
 from PySide6.QtGui import QCloseEvent, QDrag, QPixmap, QPainter
@@ -16,7 +16,9 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 # 在原来的 PySide6.QtGui 导入中增加以下类:
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
+from PySide6.QtWidgets import QFileIconProvider  # 新增
 from PySide6.QtWidgets import (
+    QTreeWidget, QTreeWidgetItem, QComboBox,
     QListWidget, QStyle, QApplication, QListWidgetItem, QPushButton,
     QMessageBox, QSplitter, QHBoxLayout, QStackedWidget, QLineEdit,
     QFormLayout, QLabel, QVBoxLayout, QWidget, QTextEdit, QFileDialog,
@@ -102,7 +104,9 @@ class SimpleHighlighter(QSyntaxHighlighter):
             r'\bif\b', r'\belif\b', r'\belse\b', r'\bwhile\b', r'\bfor\b', r'\bin\b',
             r'\breturn\b', r'\bpass\b', r'\bbreak\b', r'\bcontinue\b', r'\byield\b',
             r'\bTrue\b', r'\bFalse\b', r'\bNone\b', r'\band\b', r'\bor\b', r'\bnot\b',
-            r'\btry\b', r'\bexcept\b', r'\bfinally\b', r'\bwith\b', r'\basync\b', r'\bawait\b'
+            r'\btry\b', r'\bexcept\b', r'\bfinally\b', r'\bwith\b', r'\basync\b', r'\bawait\b',
+            r'\bint\b', r'\bfloat\b', r'\bdouble\b', r'\bchar\b', r'\bvoid\b', r'\bbool\b',
+            r'\bauto\b', r'\bconst\b', r'\bstruct\b', r'\bnamespace\b', r'\busing\b'
         ]
         self.rules = [(re.compile(kw), self.keyword_format) for kw in keywords]
 
@@ -561,6 +565,7 @@ class RemoteFileWidget(QTreeView):
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         self.icon_provider = QFileIconProvider()
         self.icon_cache = {}
+        self.icon_temp_dir = tempfile.mkdtemp(prefix="quickstfp_icons_")
 
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["名称", "大小", "类型", "修改时间", "权限"])
@@ -597,44 +602,31 @@ class RemoteFileWidget(QTreeView):
         self.viewport().setAcceptDrops(True)
 
     def get_file_icon(self, filename: str):
-        """获取系统关联的文件图标：通过真实创建临时文件来骗过系统获取图标"""
-        # os.path.splitext 对于 ".gitignore" 或 "Dockerfile" 这种文件，切出来的 ext 是空的
+        """获取系统关联的文件图标：持久化 0 字节文件欺骗法"""
         name, ext = os.path.splitext(filename)
         ext = ext.lower()
-
-        # 如果有后缀名，则以后缀名作为缓存键（如 .cpp）
-        # 如果没有后缀名（或者本身就是隐藏文件如 .gitignore），则以完整文件名作为缓存键
-        cache_key = ext if ext else filename.lower()
+        cache_key = ext if ext else filename
 
         if cache_key not in self.icon_cache:
-            # 在临时目录创建一个专属文件夹
-            temp_dir = tempfile.mkdtemp(prefix="quickstfp_icon_")
-
-            # 还原一个带精确后缀或精确文件名的文件
+            # 拼接假文件的路径 (存在我们专门创建的 temp 目录中)
             temp_filename = f"dummy{cache_key}" if ext else cache_key
-            temp_file_path = os.path.join(temp_dir, temp_filename)
+            temp_file_path = os.path.join(self.icon_temp_dir, temp_filename)
 
             try:
-                # 触摸 (Touch) 创建一个真实存在于硬盘上的空文件
-                with open(temp_file_path, 'w', encoding='utf-8') as f:
-                    pass
+                # 只要文件不存在，就创建一个 0 字节的真实文件，并且不再删除它
+                if not os.path.exists(temp_file_path):
+                    with open(temp_file_path, 'w', encoding='utf-8') as f:
+                        pass
 
-                # 此时文件真实存在，系统会老老实实交出它关联的图标
+                # 直接获取图标，不搞任何复杂的像素转换
                 icon = self.icon_provider.icon(QFileInfo(temp_file_path))
 
-                # 存入缓存
-                self.icon_cache[cache_key] = icon if not icon.isNull() else self.FILE_ICON
+                if icon.isNull():
+                    self.icon_cache[cache_key] = self.FILE_ICON
+                else:
+                    self.icon_cache[cache_key] = icon
             except Exception:
                 self.icon_cache[cache_key] = self.FILE_ICON
-            finally:
-                # 取完图标后立刻“毁尸灭迹”，不留垃圾文件
-                try:
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
-                    if os.path.exists(temp_dir):
-                        os.rmdir(temp_dir)
-                except Exception:
-                    pass
 
         return self.icon_cache[cache_key]
 
@@ -733,6 +725,62 @@ class RemoteFileWidget(QTreeView):
         # 兼容 TransportTargetWidget 使用 abspath
         target_path = getattr(self, 'abspath', self.info.getcwd())
         asyncio.run_coroutine_threadsafe(self.fetch_current_dir(target_path), self.info.loop)
+
+    def search(self, keyword: str):
+        """【新增】调度后台协程执行搜索任务"""
+        self.model.removeRows(0, self.model.rowCount())
+        self.all_files_dict.clear()
+        target_path = getattr(self, 'abspath', self.info.getcwd())
+        # 在后台异步执行搜索，防止界面卡死
+        asyncio.run_coroutine_threadsafe(self.fetch_search_results(target_path, keyword), self.info.loop)
+
+    async def fetch_search_results(self, path: str, keyword: str):
+        """【新增】执行远端 find 命令并极速并发查询文件属性"""
+        try:
+            # 执行 find 查找 (-iname 忽略大小写，2>/dev/null 忽略权限不足的报错)
+            cmd = f'cd "{path}" && find . -iname "*{keyword}*" 2>/dev/null'
+            result = await self.info.connection.run(cmd)  #
+
+            stdout = result.stdout
+            if not stdout:
+                self.current_folder_loaded_msg.emit([])
+                return
+
+            # 解析输出，去除 '.' 当前目录
+            lines = [line.strip() for line in stdout.split('\n') if line.strip() and line.strip() != '.']
+
+            # 限制最多返回 100 条，防止大量文件并发 stat 查询导致网络拥塞卡死
+            lines = lines[:100]
+
+            async def get_entry(line_path):
+                # 剔除开头的 './'，让界面直接展示清晰的相对路径 (如 src/main.py)
+                clean_name = line_path[2:] if line_path.startswith("./") else line_path
+                full_path = f"{path}/{clean_name}".replace("//", "/")
+                try:
+                    # 借助 SFTP 实时获取该文件的真实大小、修改时间、类型等信息
+                    attrs = await self.info.sftp.stat(full_path)
+
+                    # 动态构造一个兼容原有 UI 渲染体系 (add_new_file) 的伪装 Entry 对象
+                    class SearchEntry:
+                        def __init__(self, name, a):
+                            self.filename = name
+                            self.attrs = a
+
+                    return SearchEntry(clean_name, attrs)
+                except Exception:
+                    return None
+
+            # 🚀 核心优化：使用 gather 瞬间并发发出所有的 stat 请求，不阻塞排队
+            tasks = [get_entry(line) for line in lines]
+            results = await asyncio.gather(*tasks)
+
+            # 过滤掉查询失败的项，发射给 UI 线程渲染
+            entries = [r for r in results if r]
+            self.current_folder_loaded_msg.emit(entries)
+
+        except Exception as e:
+            print(f"搜索远端文件失败: {e}")
+            self.current_folder_loaded_msg.emit([])
 
     async def fetch_current_dir(self, path: str):
         """在后台执行 scandir 网络请求"""
@@ -911,8 +959,14 @@ class RemoteFileWidget(QTreeView):
         for entry in entries:
             is_dir = (entry.attrs.type == 2)
             name_item = QStandardItem(entry.filename)
-            # === 修改：如果是文件，去获取关联的系统外部程序图标 ===
-            name_item.setIcon(self.DIR_ICON if is_dir else self.get_file_icon(entry.filename))
+
+            # ========= 核心修改处 =========
+            if is_dir:
+                name_item.setIcon(self.DIR_ICON)
+            else:
+                name_item.setIcon(self.get_file_icon(entry.filename))
+            # ==============================
+
             full_path = f"{parent_path}/{entry.filename}".replace("//", "/")
             name_item.setData(full_path, Qt.ItemDataRole.UserRole)
 
@@ -945,8 +999,13 @@ class RemoteFileWidget(QTreeView):
 
             is_dir = (entry.attrs.type == 2)
             name_item = QStandardItem(filename)
-            # === 修改：如果是文件，去获取关联的系统外部程序图标 ===
-            name_item.setIcon(self.DIR_ICON if is_dir else self.get_file_icon(filename))
+
+            # ========= 核心修改处 =========
+            if is_dir:
+                name_item.setIcon(self.DIR_ICON)
+            else:
+                name_item.setIcon(self.get_file_icon(filename))
+            # ==============================
 
             # 兼容：如果设置了 abspath 说明是在 TargetWidget 里
             base_path = getattr(self, 'abspath', self.info.getcwd())
@@ -1359,6 +1418,11 @@ class UserSFTPWidget(QWidget):
         self.path_combo = QComboBox()
         self.path_combo.setEditable(True)  # 允许用户直接在框内输入路径
 
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 搜索本目录 (回车)")
+        self.search_edit.setClearButtonEnabled(True)  # 右侧自带清除 X 按钮
+        self.search_edit.setFixedWidth(160)
+
         # 初始化当前路径
         current_path = self.info.realpath(".")
         self.path_combo.addItem(current_path)
@@ -1381,6 +1445,9 @@ class UserSFTPWidget(QWidget):
         remote_hbox = QHBoxLayout()
         remote_hbox.addWidget(self.back_button)
         remote_hbox.addWidget(self.path_combo)  # <--- 核心修改 2: 放到布局中
+        remote_hbox.addWidget(self.search_edit)
+
+        remote_hbox.addWidget(self.show_hidden_btn)
 
         remote_hbox.addWidget(self.show_hidden_btn)
 
@@ -1414,6 +1481,22 @@ class UserSFTPWidget(QWidget):
         # ---> 核心修改 3: 绑定 ComboBox 的激活信号（回车或点击下拉选项）<---
         self.path_combo.activated.connect(self.on_path_combo_activated)
         self.show_hidden_btn.toggled.connect(self.toggle_hidden_files)
+        self.search_edit.returnPressed.connect(self.on_search)
+        self.search_edit.textChanged.connect(self.on_search_text_changed)
+
+
+    def on_search(self):
+        """按下回车后触发"""
+        keyword = self.search_edit.text().strip()
+        if keyword:
+            self.remote_file_widget.search(keyword)
+        else:
+            self.remote_file_widget.refresh()
+
+    def on_search_text_changed(self, text):
+        """用户点击清空按钮时，立即恢复当前目录的默认视图"""
+        if not text.strip():
+            self.remote_file_widget.refresh()
 
     def on_path_combo_activated(self):
         """当用户在输入框按回车，或在下拉列表中选择历史路径时触发"""
@@ -1536,6 +1619,268 @@ class TransportControlWidget(QListWidget):
         task()
 
 
+class SnippetDialog(QDialog):
+    """用于添加/编辑快捷命令的弹窗，支持作用域选择"""
+
+    def __init__(self, parent=None, name="", cmd="", scope="global"):
+        super().__init__(parent)
+        self.setWindowTitle("快捷命令")
+        self.resize(350, 150)
+        layout = QFormLayout(self)
+
+        self.name_edit = QLineEdit(name)
+        self.name_edit.setPlaceholderText("如: 查看Docker日志")
+        self.cmd_edit = QLineEdit(cmd)
+        self.cmd_edit.setPlaceholderText("如: docker logs -f xxx")
+
+        self.scope_combo = QComboBox()
+        self.scope_combo.addItem("🌐 全局 (所有服务器可见)", "global")
+        self.scope_combo.addItem("💻 本站 (仅当前服务器可见)", "site")
+
+        # 默认选中对应的作用域
+        if scope == "site":
+            self.scope_combo.setCurrentIndex(1)
+
+        layout.addRow("名称:", self.name_edit)
+        layout.addRow("命令:", self.cmd_edit)
+        layout.addRow("可见范围:", self.scope_combo)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addRow(btn_box)
+
+    def get_data(self):
+        return self.name_edit.text().strip(), self.cmd_edit.text().strip(), self.scope_combo.currentData()
+
+
+class QuickSnippetsWidget(QWidget):
+    """快捷命令侧边栏组件 (支持全局与站点区分 + 右键菜单)"""
+    command_triggered = Signal(str)
+
+    def __init__(self, site_id: str):
+        super().__init__()
+        self.site_id = site_id
+        self.snippets_file = "quick_snippets_v2.json"
+        self.data = {
+            "global": [],
+            "sites": {}
+        }
+        self.init_ui()
+        self.load_snippets()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        title = QLabel("⚡ 快捷命令 (双击执行)")
+        title.setStyleSheet("font-weight: bold; color: #555;")
+        layout.addWidget(title)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setIndentation(15)
+        self.tree.itemDoubleClicked.connect(self.execute_item)
+
+        # === 【核心新增 1】：开启自定义右键菜单支持 ===
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.show_context_menu)
+        # ========================================
+
+        layout.addWidget(self.tree)
+
+        # 底部按钮区 (保留按钮以便不喜欢右键的用户也能操作)
+        btn_layout = QHBoxLayout()
+        self.add_btn = QPushButton("添加")
+        self.edit_btn = QPushButton("编辑")
+        self.del_btn = QPushButton("删除")
+
+        self.add_btn.clicked.connect(self.add_snippet)
+        self.edit_btn.clicked.connect(self.edit_snippet)
+        self.del_btn.clicked.connect(self.del_snippet)
+
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.edit_btn)
+        btn_layout.addWidget(self.del_btn)
+        layout.addLayout(btn_layout)
+
+    # === 【核心新增 2】：右键菜单绘制逻辑 ===
+    def show_context_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        menu = QMenu(self)
+
+        # --- 智能推断添加命令的默认作用域 ---
+        default_scope = "global"
+        if item:
+            meta = item.data(0, Qt.ItemDataRole.UserRole)
+            if meta:
+                # 1. 如果点在具体命令上，根据该命令的 type 决定
+                default_scope = meta["type"]
+            else:
+                # 2. 如果点在分类标题（根节点）上，通过标题文字推断
+                if "本站" in item.text(0):
+                    default_scope = "site"
+        # ------------------------------------
+
+        add_action = menu.addAction("➕ 添加命令")
+        # 使用 lambda 捕获推断出的 default_scope
+        # 注意: triggered 默认会传递一个 bool(checked)，用 _ 忽略掉
+        add_action.triggered.connect(lambda _, s=default_scope: self.add_snippet(s))
+
+        if item and item.data(0, Qt.ItemDataRole.UserRole):
+            menu.addSeparator()
+
+            exec_action = menu.addAction("🚀 立刻执行")
+            exec_action.triggered.connect(lambda _, i=item: self.execute_item(i, 0))
+
+            edit_action = menu.addAction("✏️ 编辑")
+            edit_action.triggered.connect(self.edit_snippet)
+
+            del_action = menu.addAction("🗑️ 删除")
+            del_action.triggered.connect(self.del_snippet)
+
+        menu.exec(self.tree.mapToGlobal(pos))
+
+    # === 更新的添加命令逻辑 ===
+    def add_snippet(self, default_scope="global"):
+        # 兼容处理：底部的 "添加" 按钮点击时，clicked 信号默认会传一个布尔值 False 过来
+        if isinstance(default_scope, bool):
+            default_scope = "global"
+
+        # 将智能推断出（或兜底的） default_scope 传给弹窗
+        dialog = SnippetDialog(self, scope=default_scope)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name, cmd, scope = dialog.get_data()
+            if name and cmd:
+                target_list = self._get_target_list(scope)
+                target_list.append({"name": name, "cmd": cmd})
+                self.save_snippets()
+                self.refresh_tree()
+
+    def load_snippets(self):
+        if os.path.exists(self.snippets_file):
+            try:
+                with open(self.snippets_file, 'r', encoding='utf-8') as f:
+                    loaded_data = json.load(f)
+                    self.data["global"] = loaded_data.get("global", [])
+                    self.data["sites"] = loaded_data.get("sites", {})
+            except Exception as e:
+                print(f"解析快捷命令配置失败: {e}")
+
+        if self.site_id not in self.data["sites"]:
+            self.data["sites"][self.site_id] = []
+
+        self.refresh_tree()
+
+    def save_snippets(self):
+        try:
+            with open(self.snippets_file, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            QMessageBox.warning(self, "保存失败", str(e))
+
+    def refresh_tree(self):
+        self.tree.clear()
+
+        global_root = QTreeWidgetItem(self.tree, ["🌐 全局命令"])
+        global_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        for idx, snip in enumerate(self.data["global"]):
+            item = QTreeWidgetItem(global_root, [f"{snip['name']}\n> {snip['cmd']}"])
+            item.setToolTip(0, snip['cmd'])
+            item.setData(0, Qt.ItemDataRole.UserRole, {"type": "global", "index": idx, "data": snip})
+
+        site_root = QTreeWidgetItem(self.tree, ["💻 本站命令"])
+        site_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        for idx, snip in enumerate(self.data["sites"][self.site_id]):
+            item = QTreeWidgetItem(site_root, [f"{snip['name']}\n> {snip['cmd']}"])
+            item.setToolTip(0, snip['cmd'])
+            item.setData(0, Qt.ItemDataRole.UserRole, {"type": "site", "index": idx, "data": snip})
+
+        self.tree.expandAll()
+
+    def _get_target_list(self, scope: str):
+        if scope == "global":
+            return self.data["global"]
+        else:
+            return self.data["sites"][self.site_id]
+
+    def edit_snippet(self):
+        item = self.tree.currentItem()
+        if not item or not item.data(0, Qt.ItemDataRole.UserRole): return
+
+        meta = item.data(0, Qt.ItemDataRole.UserRole)
+        old_scope = meta["type"]
+        snip = meta["data"]
+
+        dialog = SnippetDialog(self, snip['name'], snip['cmd'], old_scope)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name, cmd, new_scope = dialog.get_data()
+            if not (name and cmd): return
+
+            if old_scope != new_scope:
+                self._get_target_list(old_scope).pop(meta["index"])
+                self._get_target_list(new_scope).append({"name": name, "cmd": cmd})
+            else:
+                target_list = self._get_target_list(old_scope)
+                target_list[meta["index"]] = {"name": name, "cmd": cmd}
+
+            self.save_snippets()
+            self.refresh_tree()
+
+    def del_snippet(self):
+        item = self.tree.currentItem()
+        if not item or not item.data(0, Qt.ItemDataRole.UserRole): return
+
+        reply = QMessageBox.question(self, "确认删除", "确定要删除该快捷命令吗？")
+        if reply == QMessageBox.StandardButton.Yes:
+            meta = item.data(0, Qt.ItemDataRole.UserRole)
+            target_list = self._get_target_list(meta["type"])
+            target_list.pop(meta["index"])
+
+            self.save_snippets()
+            self.refresh_tree()
+
+    def execute_item(self, item, column):
+        meta = item.data(0, Qt.ItemDataRole.UserRole)
+        if not meta: return
+
+        snip = meta["data"]
+        self.command_triggered.emit(snip['cmd'] + '\r')
+
+
+class TerminalPanel(QWidget):
+    """新的主容器：组合原有的 SSH 终端(左) 和 快捷命令面板(右)"""
+
+    def __init__(self, info):
+        super().__init__()
+        self.info = info
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # 1. 实例化原有终端组件
+        self.ssh_pty_widget = SSHPtyWidget(self.info)
+
+        # 2. 生成站点的唯一标识 (例如 root@192.168.1.10:22)
+        site_id = f"{self.info.username}@{self.info.host}:{self.info.port}"
+
+        # 3. 实例化新增的快捷面板 (传入站点标识)
+        self.snippets_widget = QuickSnippetsWidget(site_id)
+
+        # 4. 【核心整合】：将命令写入到终端输入流
+        self.snippets_widget.command_triggered.connect(self.ssh_pty_widget.bridge.on_input)
+
+        self.splitter.addWidget(self.ssh_pty_widget)
+        self.splitter.addWidget(self.snippets_widget)
+
+        # 默认让终端占据比较大的空间
+        self.splitter.setStretchFactor(0, 4)
+        self.splitter.setStretchFactor(1, 1)
+
+        layout.addWidget(self.splitter)
+
+
 class SFTPTabWidget(QWidget):
     """
     单个会话标签页的总控容器
@@ -1555,7 +1900,7 @@ class SFTPTabWidget(QWidget):
         self.control_widget = ControlWidget(self)
         self.transport_control_widget = TransportControlWidget(self)
         self.user_sftp_widget = UserSFTPWidget(self)
-        self.ssh_pty_widget = SSHPtyWidget(self.info)
+        self.terminal_panel = TerminalPanel(self.info)
 
         self.stacked_widget = QStackedWidget()
         self.hbox = QHBoxLayout(self)
@@ -1563,7 +1908,7 @@ class SFTPTabWidget(QWidget):
 
     def init_ui(self):
         # 组装面板
-        self.stacked_widget.addWidget(self.ssh_pty_widget)
+        self.stacked_widget.addWidget(self.terminal_panel)
         self.stacked_widget.addWidget(self.user_sftp_widget)
         self.stacked_widget.addWidget(self.transport_control_widget)
 
