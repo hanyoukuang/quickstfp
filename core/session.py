@@ -89,7 +89,7 @@ class SSHSFTPInfo(QThread):
             password=self.password,
             client_keys=self.client_keys,
             passphrase=self.passphrase,
-            known_hosts=None,
+            known_hosts=None,  # TODO: 在生产环境中应使用 known_hosts 验证主机密钥以防范 MITM 攻击
         )
         self.process = await self.connection.create_process(
             request_pty=True,

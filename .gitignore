@@ -1,0 +1,40 @@
+# ============ 安全：加密密钥与凭证数据文件 ============
+# 包含 Fernet 对称加密密钥，用于加密 SSH 密码
+# 如果此文件泄露，所有已保存的 SSH 凭证可被解密
+.secret.key
+
+# 存储 SSH 连接凭证的 SQLite 数据库
+# (密码/密钥 passphrase 使用 .secret.key 加密存储)
+userinfo.db
+
+# ============ 运行时生成的文件 ============
+# 快捷命令配置（可能包含敏感命令）
+quick_snippets_v2.json
+
+# 文件传输临时下载目录
+tmp/
+temp/
+
+# PySide6 图标缓存临时目录
+quickstfp_icons_*
+
+# 外部编辑器临时文件目录
+quickstfp_ext_*
+
+# ============ Python 标准忽略 ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+.env
+
+# ============ 操作系统文件 ============
+.DS_Store
+Thumbs.db
+
+# ============ 包管理 ============
+uv.lock

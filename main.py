@@ -5,7 +5,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QMessageBox
 
 # 导入核心会话界面
-from ui.views.sftp_view import SFTPTabWidget
+from ui.views.sftp_tab_widget import SFTPTabWidget
 # 导入我们上一步做好的站点管理器
 from ui.views.site_manager import SiteManagerWidget
 
