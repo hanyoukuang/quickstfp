@@ -7,6 +7,33 @@
         var sessionId = container.getAttribute('data-session-id');
         if (!sessionId) { container.textContent = 'No session ID'; return; }
 
+        var BINARY_EXTENSIONS = [
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.ico',
+            '.psd', '.ai', '.svgz',
+            '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm',
+            '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.mid', '.midi',
+            '.pdf',
+            '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+            '.odt', '.ods', '.odp',
+            '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tgz', '.cab',
+            '.iso', '.img', '.dmg',
+            '.exe', '.dll', '.sys', '.so', '.o', '.obj', '.lib', '.a',
+            '.app',
+            '.db', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.dbf',
+            '.ttf', '.otf', '.woff', '.woff2', '.eot',
+            '.bin', '.dat', '.class', '.pyc', '.pyo',
+            '.jar', '.apk', '.ipa',
+            '.swf', '.elf', '.rom',
+        ];
+
+        function isBinary(filename) {
+            if (!filename) return false;
+            var idx = filename.lastIndexOf('.');
+            if (idx === -1) return false;
+            var ext = filename.substring(idx).toLowerCase();
+            return BINARY_EXTENSIONS.indexOf(ext) !== -1;
+        }
+
         var currentPath = '/';
         var loading = false;
 
@@ -18,6 +45,7 @@
             if (loading) return;
             loading = true;
             currentPath = path;
+            window._filebrowserPath = path;
 
             showLoading(true);
 
@@ -124,7 +152,12 @@
                 tr.ondblclick = function (e) {
                     if (e.target.closest('button') || e.target.tagName === 'BUTTON') return;
                     if (entry.type === 'file') {
-                        openFileEditor(entry.path, entry.name);
+                        if (isBinary(entry.name)) {
+                            downloadFile(entry.path);
+                            showToast('Binary file — downloading instead of opening editor', 'warning');
+                        } else {
+                            openFileEditor(entry.path, entry.name);
+                        }
                     }
                 };
 
@@ -151,7 +184,9 @@
             if (entry.type === 'dir') {
                 items.push({ label: '📂 Open', action: function () { fetchDir(entry.path); } });
             } else {
-                items.push({ label: '✏️ Edit', action: function () { openFileEditor(entry.path, entry.name); } });
+                if (!isBinary(entry.name)) {
+                    items.push({ label: '✏️ Edit', action: function () { openFileEditor(entry.path, entry.name); } });
+                }
                 items.push({ label: '⬇️ Download', action: function () { downloadFile(entry.path); } });
             }
             items.push({ label: '📋 Copy', action: function () { showCopyMoveDialog('copy', entry.path); } });
@@ -208,6 +243,15 @@
             window.open('/api/transport/' + encodeURIComponent(sessionId) + '/download?path=' + encodeURIComponent(path), '_blank');
         }
 
+        function _applyEditorContent(path, content) {
+            if (window._monacoEditor) {
+                window._monacoEditor.setValue(content);
+                window._monacoEditor._filePath = path;
+            } else {
+                window._pendingEditor = { content: content, path: path };
+            }
+        }
+
         function openFileEditor(path, name) {
             var modal = document.getElementById('editor-modal');
             var editorTitle = document.getElementById('editor-title');
@@ -218,13 +262,15 @@
             modal.classList.add('open');
 
             fetch('/api/sftp/' + encodeURIComponent(sessionId) + '/read?path=' + encodeURIComponent(path))
-                .then(function (r) { return r.json(); })
+                .then(function (r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
                 .then(function (data) {
-                    var content = data.content || '';
-                    if (window._monacoEditor) {
-                        window._monacoEditor.setValue(content);
-                        window._monacoEditor._filePath = path;
+                    if (!data.content && data.content !== '') {
+                        throw new Error(data.message || data.detail?.message || 'No content returned');
                     }
+                    _applyEditorContent(path, data.content);
                 })
                 .catch(function (err) {
                     showToast('Failed to read: ' + err.message, 'error');

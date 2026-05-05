@@ -100,11 +100,26 @@ class SSHSession:
 
     async def read_file(self, path: str) -> str:
         async with self.sftp.open(path, "rb") as fp:
-            return (await fp.read()).decode("u8")
+            data = await fp.read()
+        try:
+            return data.decode("u8")
+        except UnicodeDecodeError:
+            raise ValueError(
+                f"File '{path}' is not a valid UTF-8 text file. "
+                "Use the Download button or transport endpoint for binary files."
+            )
+
+    async def read_bytes(self, path: str) -> bytes:
+        async with self.sftp.open(path, "rb") as fp:
+            return await fp.read()
 
     async def save_file(self, path: str, text: str) -> None:
         async with self.sftp.open(path, "wb") as f:
             await f.write(text.encode())
+
+    async def save_bytes(self, path: str, data: bytes) -> None:
+        async with self.sftp.open(path, "wb") as f:
+            await f.write(data)
 
     async def realpath(self, path: str) -> str:
         return await self.sftp.realpath(path)

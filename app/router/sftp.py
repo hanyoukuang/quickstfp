@@ -94,8 +94,12 @@ async def read_file(
     try:
         content = await session.read_file(path)
         return {"content": content}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"ok": False, "message": str(e)})
     except asyncssh.SFTPError as e:
         raise HTTPException(status_code=400, detail={"ok": False, "message": str(e)})
+    except UnicodeDecodeError as e:
+        raise HTTPException(status_code=400, detail={"ok": False, "message": f"Cannot read file: {e}"})
 
 
 @router.put("/sftp/{session_id}/write", response_model=MessageResponse)

@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.deps import get_ssh_manager
-from app.service.ssh_manager import SSHManager, SessionNotFoundError
+from app.service.ssh_manager import SessionNotFoundError
 
 router = APIRouter(tags=["ws-terminal"])
 logger = logging.getLogger("terminal")
