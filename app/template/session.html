@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block head %}
+<link rel="stylesheet" href="/static/js/xterm/xterm.min.css"/>
+<script src="/static/js/xterm/xterm.min.js"></script>
+<script src="/static/js/xterm/xterm-addon-fit.min.js"></script>
+<style>
+    .session-layout { display: flex; height: 100%; }
+
+    .panel-left { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 250px; }
+    .panel-right { flex: 1; display: flex; flex-direction: column; min-width: 250px; }
+
+    .terminal-section { flex: 1; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
+    .snippets-section { flex: 1; display: flex; flex-direction: column; }
+
+    .section-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 6px 12px; background: var(--bg-alt); border-bottom: 1px solid var(--border);
+        font-size: 12px; font-weight: 600; flex-shrink: 0;
+    }
+    .section-body { flex: 1; overflow: auto; }
+
+    #filebrowser table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #filebrowser th {
+        position: sticky; top: 0; background: var(--bg-alt); z-index: 1;
+        text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border);
+        color: var(--text-muted); font-weight: 500;
+    }
+    #filebrowser td { padding: 3px 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
+    #filebrowser tr:hover td { background: var(--surface); }
+
+    .btn-mini { padding: 2px 8px; font-size: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); cursor: pointer; }
+    .btn-mini:hover { border-color: var(--primary); }
+
+    .transport-list { padding: 4px; }
+</style>
+{% endblock %}
+
+{% block status %}{{ username }}@{{ host }}:{{ port }}{% endblock %}
+
+{% block content %}
+<div class="session-layout">
+    <!-- Left panel: Terminal + File Browser -->
+    <div class="panel-left">
+        <div class="terminal-section">
+            <div class="section-header">
+                <span>🖥 Terminal</span>
+                <span style="font-weight:400;color:var(--text-muted);">{{ username }}@{{ host }}</span>
+            </div>
+            <div class="section-body" id="terminal-container" data-session-id="{{ session_id }}"></div>
+        </div>
+        <div class="terminal-section" style="flex:0.6;">
+            <div class="section-header">
+                <span>📁 Files</span>
+                <div style="display:flex;gap:4px;">
+                    <button class="btn-mini" id="btn-mkdir" title="New Folder">+Dir</button>
+                    <button class="btn-mini" id="btn-upload" title="Upload">↑Up</button>
+                </div>
+            </div>
+            <div class="section-body" id="filebrowser" data-session-id="{{ session_id }}">
+                <table>
+                    <thead><tr><th>Name</th><th>Size</th><th>Perms</th><th>Time</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right panel: Snippets + Transport -->
+    <div class="panel-right">
+        <div class="snippets-section">
+            <div class="section-header">
+                <span>⚡ Quick Snippets</span>
+                <button class="btn-mini" id="btn-add-snippet">+</button>
+            </div>
+            <div class="section-body" id="snippets-panel" data-session-id="{{ session_id }}">
+                <div class="snippet-list"></div>
+            </div>
+        </div>
+        <div class="snippets-section">
+            <div class="section-header">
+                <span>📊 Transports</span>
+            </div>
+            <div class="section-body" id="transport-panel" data-session-id="{{ session_id }}">
+                <div class="transport-list"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Editor Modal -->
+<div class="modal-overlay" id="editor-modal">
+    <div class="modal" style="min-width:80%;max-width:95%;">
+        <h2 id="editor-title">Editor</h2>
+        <div id="editor-container" style="height:60vh;"></div>
+        <div class="modal-actions">
+            <button class="btn btn-primary" id="btn-editor-save">Save (Ctrl+S)</button>
+            <button class="btn btn-ghost" id="btn-editor-close">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/terminal.js"></script>
+<script src="/static/js/snippets.js"></script>
+<script src="/static/js/filebrowser.js"></script>
+<script src="/static/js/transport.js"></script>
+<script>
+    // Monaco Editor: only load if on a modern browser
+    if (typeof monaco === 'undefined') {
+        var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }};
+        var script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js';
+        script.onload = function() {
+            require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }});
+            require(['vs/editor/editor.main'], function() {
+                var el = document.getElementById('editor-container');
+                if (el) {
+                    var ed = monaco.editor.create(el, {
+                        value: '', language: 'plaintext', theme: 'vs-dark',
+                        automaticLayout: true, minimap: {enabled: false},
+                        fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false,
+                    });
+                    ed._filePath = '';
+                    window._monacoEditor = ed;
+
+                    // Ctrl+S save
+                    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() {
+                        var btn = document.getElementById('btn-editor-save');
+                        if (btn) btn.click();
+                    });
+                }
+            });
+        };
+        document.head.appendChild(script);
+    }
+
+    // Editor modal Esc to close
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            var m = document.getElementById('editor-modal');
+            if (m && m.classList.contains('open')) m.classList.remove('open');
+        }
+    });
+
+    // Send snippet to terminal
+    document.addEventListener('sendToTerminal', function(e) {
+        var ws = window._terminalWS;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.detail.command);
+        }
+    });
+</script>
+{% endblock %}

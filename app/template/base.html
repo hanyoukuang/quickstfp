@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>QuickSFTP Web</title>
+    <link rel="stylesheet" href="/static/css/app.css"/>
+    {% block head %}{% endblock %}
+</head>
+<body>
+<nav class="topbar">
+    <a href="/sites" class="brand">QuickSFTP</a>
+    <a href="/sites">🗄 Sites</a>
+    <div class="spacer"></div>
+    <span id="topbar-status" style="font-size:12px;color:var(--text-muted);">{% block status %}{% endblock %}</span>
+</nav>
+
+<main>
+{% block content %}{% endblock %}
+</main>
+
+<div class="toast-container" id="toast-container"></div>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

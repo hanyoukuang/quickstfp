@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block head %}
+<style>
+    .site-manager { max-width: 800px; margin: 40px auto; }
+    .site-list { margin-bottom: 24px; }
+    .site-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        background: var(--surface);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .site-card:hover { border-color: var(--primary); }
+    .site-card .info { flex: 1; }
+    .site-card .host { font-weight: 600; font-size: 14px; }
+    .site-card .user { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .site-card .actions { display: flex; gap: 4px; }
+
+    .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tab {
+        padding: 8px 16px;
+        font-size: 13px;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        background: none;
+        border: none;
+        color: var(--text-muted);
+    }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    .form-section { display: none; }
+    .form-section.active { display: block; }
+
+    .add-btn { margin-bottom: 16px; }
+    .empty-state { text-align: center; padding: 40px; color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block status %}{% endblock %}
+
+{% block content %}
+<div class="site-manager">
+    <div class="tabs">
+        <button class="tab active" onclick="switchFormTab('password')">🔑 Password</button>
+        <button class="tab" onclick="switchFormTab('key')">🔐 Key</button>
+    </div>
+
+    <div id="form-password" class="form-section active">
+        <h3 style="margin-bottom:12px;">Add Password Site</h3>
+        <div class="form-group"><label>Host</label><input type="text" id="pw-host" placeholder="example.com"></div>
+        <div class="form-group"><label>Port</label><input type="number" id="pw-port" value="22"></div>
+        <div class="form-group"><label>Username</label><input type="text" id="pw-username" placeholder="root"></div>
+        <div class="form-group"><label>Password</label><input type="password" id="pw-password" placeholder="password"></div>
+        <button class="btn btn-primary add-btn" onclick="addPasswordSite()">➕ Add Site</button>
+    </div>
+
+    <div id="form-key" class="form-section">
+        <h3 style="margin-bottom:12px;">Add Key Site</h3>
+        <div class="form-group"><label>Host</label><input type="text" id="key-host" placeholder="example.com"></div>
+        <div class="form-group"><label>Port</label><input type="number" id="key-port" value="22"></div>
+        <div class="form-group"><label>Username</label><input type="text" id="key-username" placeholder="root"></div>
+        <div class="form-group"><label>Key Path</label><input type="text" id="key-keypath" placeholder="/home/user/.ssh/id_rsa"></div>
+        <div class="form-group"><label>Passphrase (optional)</label><input type="password" id="key-passphrase" placeholder="passphrase"></div>
+        <button class="btn btn-primary add-btn" onclick="addKeySite()">➕ Add Site</button>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="btn btn-sm btn-ghost" onclick="importSites()">📥 Import</button>
+        <button class="btn btn-sm btn-ghost" onclick="exportSites()">📤 Export</button>
+    </div>
+
+    <h3 style="margin-bottom:12px;">Saved Sites</h3>
+    <div id="site-list" class="site-list"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function switchFormTab(type) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('form-' + type).classList.add('active');
+}
+
+function toast(msg, ok) {
+    const el = document.createElement('div');
+    el.className = 'toast toast-' + (ok ? 'success' : 'error');
+    el.textContent = msg;
+    const c = document.getElementById('toast-container') || document.body;
+    c.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+}
+
+function addPasswordSite() {
+    const h = document.getElementById('pw-host').value.trim();
+    const p = document.getElementById('pw-port').value || 22;
+    const u = document.getElementById('pw-username').value.trim();
+    const pw = document.getElementById('pw-password').value;
+    if (!h || !u) { toast('Host and Username required', false); return; }
+    fetch('/api/sites', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({auth_type:'password', host:h, port:parseInt(p), username:u, password:pw}),
+    }).then(r => r.json()).then(d => { if(d.id) { toast('Site added', true); loadSites(); } else { toast(d.message||'Failed', false); }});
+}
+
+function addKeySite() {
+    const h = document.getElementById('key-host').value.trim();
+    const p = document.getElementById('key-port').value || 22;
+    const u = document.getElementById('key-username').value.trim();
+    const kp = document.getElementById('key-keypath').value.trim();
+    const ps = document.getElementById('key-passphrase').value;
+    if (!h || !u || !kp) { toast('Host, Username and Key Path required', false); return; }
+    fetch('/api/sites', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({auth_type:'key', host:h, port:parseInt(p), username:u, key_path:kp, passphrase:ps}),
+    }).then(r => r.json()).then(d => { if(d.id) { toast('Site added', true); loadSites(); } else { toast(d.message||'Failed', false); }});
+}
+
+function deleteSite(id, authType) {
+    if (!confirm('Delete this site?')) return;
+    fetch('/api/sites/' + id + '?auth_type=' + authType, {method:'DELETE'})
+        .then(r => r.json()).then(d => { if(d.ok) { toast('Site deleted', true); loadSites(); } });
+}
+
+function connectSite(site) {
+    fetch('/api/sessions', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            host: site.host, port: site.port, username: site.username,
+            password: site.password || undefined,
+            client_keys: site.key_path ? [site.key_path] : undefined,
+            passphrase: site.passphrase || undefined,
+        }),
+    }).then(r => r.json()).then(d => {
+        if (d.session_id) {
+            window.location.href = '/sessions/' + d.session_id;
+        } else {
+            toast(d.message || 'Connection failed', false);
+        }
+    }).catch(e => toast('Connection failed: ' + e.message, false));
+}
+
+function exportSites() {
+    fetch('/api/sites/export').then(r => r.json()).then(d => {
+        if (d.ok) {
+            const blob = new Blob([d.message], {type:'application/json'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'quickstfp-sites.json';
+            a.click();
+        }
+    });
+}
+
+function importSites() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = () => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+                fetch('/api/sites/import', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({data: Array.isArray(data) ? data : [data]}),
+                }).then(r => r.json()).then(d => {
+                    toast(d.message, true);
+                    loadSites();
+                });
+            } catch(e) { toast('Invalid JSON', false); }
+        };
+        reader.readAsText(input.files[0]);
+    };
+    input.click();
+}
+
+function loadSites() {
+    fetch('/api/sites').then(r => r.json()).then(sites => {
+        const container = document.getElementById('site-list');
+        if (sites.length === 0) {
+            container.innerHTML = '<div class="empty-state">No saved sites. Add one above.</div>';
+            return;
+        }
+        container.innerHTML = sites.map(s => `
+            <div class="site-card" ondblclick="connectSite(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+                <div class="info">
+                    <div class="host">${s.auth_type === 'key' ? '🔐' : '🔑'} ${escapeHtml(s.host)}:${s.port}</div>
+                    <div class="user">${escapeHtml(s.username)}${s.key_path ? ' · ' + escapeHtml(s.key_path) : ''}</div>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-sm btn-primary" onclick="connectSite(${JSON.stringify(s).replace(/"/g, '&quot;')})">Connect</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteSite(${s.id}, '${s.auth_type}')">🗑</button>
+                </div>
+            </div>
+        `).join('');
+    });
+}
+
+function escapeHtml(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+loadSites();
+</script>
+{% endblock %}

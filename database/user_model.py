@@ -53,7 +53,7 @@ class UserInfoDB:
         :param db_path: 数据库文件路径，默认为 'userinfo.db'
         """
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.crypto = CryptoManager()  # 初始化加密器
         self.create_table()
