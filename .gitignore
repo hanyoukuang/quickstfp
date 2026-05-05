@@ -2,6 +2,7 @@
 # 包含 Fernet 对称加密密钥，用于加密 SSH 密码
 # 如果此文件泄露，所有已保存的 SSH 凭证可被解密
 .secret.key
+REFACTOR_PLAN.md
 
 # 存储 SSH 连接凭证的 SQLite 数据库
 # (密码/密钥 passphrase 使用 .secret.key 加密存储)
