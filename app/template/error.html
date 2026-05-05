@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block head %}<style>.error-page { text-align:center; padding:80px 20px; } .error-page h1 { font-size:72px; color:var(--danger); } .error-page p { color:var(--text-muted); margin:16px 0; }</style>{% endblock %}
+{% block status %}Error{% endblock %}
+{% block content %}
+<div class="error-page">
+    <h1>{{ code }}</h1>
+    <p>{{ message }}</p>
+    <a href="/sites" class="btn btn-primary">Back to Sites</a>
+</div>
+{% endblock %}
+{% block scripts %}{% endblock %}
