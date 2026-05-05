@@ -100,12 +100,17 @@
 
                 var icon = entry.type === 'dir' ? '📁' : '📄';
                 var nameEscaped = escapeHtml(entry.name || '');
+                var downloadBtn = entry.type === 'file'
+                    ? '<button class="btn-dl" title="Download" style="padding:1px 6px;font-size:12px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;line-height:1.5;" data-path="' + escapeHtml(entry.path || '') + '">⬇</button>'
+                    : '';
                 tr.innerHTML = '<td class="name"><span class="type-' + (entry.type || 'file') + '">' + icon + ' ' + nameEscaped + '</span></td>' +
                     '<td>' + formatSize(entry.size) + '</td>' +
                     '<td style="font-family:monospace;font-size:11px;">' + escapeHtml(entry.permissions || '-') + '</td>' +
-                    '<td>' + escapeHtml(entry.mtime_display || '-') + '</td>';
+                    '<td>' + escapeHtml(entry.mtime_display || '-') + '</td>' +
+                    '<td style="text-align:center;">' + downloadBtn + '</td>';
 
                 tr.onclick = function (e) {
+                    if (e.target.closest('button') || e.target.tagName === 'BUTTON') return;
                     if (entry.type === 'dir') {
                         fetchDir(entry.path);
                     }
@@ -117,12 +122,20 @@
                 };
 
                 tr.ondblclick = function (e) {
+                    if (e.target.closest('button') || e.target.tagName === 'BUTTON') return;
                     if (entry.type === 'file') {
                         openFileEditor(entry.path, entry.name);
                     }
                 };
 
                 tbody.appendChild(tr);
+            });
+
+            tbody.querySelectorAll('.btn-dl').forEach(function (btn) {
+                btn.onclick = function (e) {
+                    e.stopPropagation();
+                    downloadFile(btn.dataset.path);
+                };
             });
         }
 

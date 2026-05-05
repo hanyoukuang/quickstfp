@@ -4,19 +4,31 @@
 <script src="/static/js/xterm/xterm.min.js"></script>
 <script src="/static/js/xterm/xterm-addon-fit.min.js"></script>
 <style>
-    .session-layout { display: flex; height: 100%; }
-    .panel-left { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 250px; }
-    .panel-right { flex: 1; display: flex; flex-direction: column; min-width: 250px; }
-    .terminal-section { flex: 1; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
-    .snippets-section { flex: 1; display: flex; flex-direction: column; }
+    .session-layout { display: flex; height: 100%; --left-ratio: 0.55; }
+    .panel-left { width: calc(var(--left-ratio) * 100%); display: flex; flex-direction: column; min-width: 200px; --top-ratio: 0.55; }
+    .panel-right { flex: 1; display: flex; flex-direction: column; min-width: 200px; --right-top-ratio: 0.55; }
+    .terminal-section { height: calc(var(--top-ratio) * 100%); display: flex; flex-direction: column; min-height: 80px; }
+    .file-section { flex: 1; display: flex; flex-direction: column; min-height: 80px; }
+    .snippets-section { height: calc(var(--right-top-ratio) * 100%); display: flex; flex-direction: column; min-height: 80px; }
+    .transport-section { flex: 1; display: flex; flex-direction: column; min-height: 80px; }
     .section-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--bg-alt); border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; flex-shrink: 0; }
     .section-body { flex: 1; overflow: auto; }
+
+    .resizer-h { width: 5px; cursor: col-resize; background: var(--border); flex-shrink: 0; transition: background 0.15s; position: relative; }
+    .resizer-h:hover, .resizer-h.active { background: var(--primary); }
+    .resizer-h::after { content: ''; position: absolute; inset: 0 -3px; }
+    .resizer-v { height: 5px; cursor: row-resize; background: var(--border); flex-shrink: 0; transition: background 0.15s; position: relative; }
+    .resizer-v:hover, .resizer-v.active { background: var(--primary); }
+    .resizer-v::after { content: ''; position: absolute; inset: -3px 0; }
+
     #filebrowser table { width: 100%; border-collapse: collapse; font-size: 12px; }
     #filebrowser th { position: sticky; top: 0; background: var(--bg-alt); z-index: 1; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 500; }
     #filebrowser td { padding: 3px 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
     #filebrowser tr:hover td { background: var(--surface); }
+
     .btn-mini { padding: 2px 8px; font-size: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); cursor: pointer; }
     .btn-mini:hover { border-color: var(--primary); }
+    .btn-dl:hover { border-color: var(--primary) !important; color: var(--primary) !important; }
     .transport-list { padding: 4px; }
 </style>
 {% endblock %}
@@ -34,25 +46,28 @@
     <a href="/sites" class="btn btn-primary" style="margin-top:16px;display:inline-block;">Back to Sites</a>
 </div>
 {% else %}
-<div class="session-layout">
-    <div class="panel-left">
-        <div class="terminal-section">
+<div class="session-layout" id="session-layout">
+    <div class="panel-left" id="panel-left">
+        <div class="terminal-section" id="terminal-section">
             <div class="section-header"><span>🖥 Terminal</span><span style="font-weight:400;color:var(--text-muted);">{{ username }}@{{ host }}</span></div>
             <div class="section-body" id="terminal-container" data-session-id="{{ session_id }}"></div>
         </div>
-        <div class="terminal-section" style="flex:0.6;">
+        <div class="resizer-v" id="resizer-left-v"></div>
+        <div class="file-section" id="file-section">
             <div class="section-header"><span>📁 Files</span><div style="display:flex;gap:4px;"><button class="btn-mini" id="btn-mkdir" title="New Folder">+Dir</button><button class="btn-mini" id="btn-upload" title="Upload">↑Up</button></div></div>
             <div class="section-body" id="filebrowser" data-session-id="{{ session_id }}">
-                <table><thead><tr><th>Name</th><th>Size</th><th>Perms</th><th>Time</th></tr></thead><tbody></tbody></table>
+                <table><thead><tr><th>Name</th><th>Size</th><th>Perms</th><th>Time</th><th style="width:36px;"></th></tr></thead><tbody></tbody></table>
             </div>
         </div>
     </div>
-    <div class="panel-right">
-        <div class="snippets-section">
+    <div class="resizer-h" id="resizer-main-h"></div>
+    <div class="panel-right" id="panel-right">
+        <div class="snippets-section" id="snippets-section">
             <div class="section-header"><span>⚡ Quick Snippets</span><button class="btn-mini" id="btn-add-snippet">+</button></div>
             <div class="section-body" id="snippets-panel" data-session-id="{{ session_id }}"><div class="snippet-list"></div></div>
         </div>
-        <div class="snippets-section">
+        <div class="resizer-v" id="resizer-right-v"></div>
+        <div class="transport-section" id="transport-section">
             <div class="section-header"><span>📊 Transports</span></div>
             <div class="section-body" id="transport-panel" data-session-id="{{ session_id }}"><div class="transport-list"></div></div>
         </div>
@@ -78,45 +93,122 @@
 <script src="/static/js/filebrowser.js"></script>
 <script src="/static/js/transport.js"></script>
 <script>
-    var _loadMonaco = function() {
-        var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }};
+(function () {
+    function makeResizable(resizer, prevEl, nextEl, layoutEl, direction) {
+        var prop = direction === 'h' ? '--left-ratio' : '--top-ratio';
+        var sizeProp = direction === 'h' ? 'offsetWidth' : 'offsetHeight';
+        var clientProp = direction === 'h' ? 'clientX' : 'clientY';
+        var isHorizontal = direction === 'h';
+
+        var startPos = 0, startSize = 0, totalSize = 0;
+
+        function onPointerDown(e) {
+            e.preventDefault();
+            resizer.classList.add('active');
+            document.body.style.cursor = isHorizontal ? 'col-resize' : 'row-resize';
+            document.body.style.userSelect = 'none';
+
+            startPos = e[clientProp];
+            totalSize = layoutEl[isHorizontal ? 'offsetWidth' : 'offsetHeight'];
+            startSize = prevEl[sizeProp];
+
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+        }
+
+        function onPointerMove(e) {
+            var delta = e[clientProp] - startPos;
+            var newSize = startSize + delta;
+            var ratio = newSize / totalSize;
+            ratio = Math.max(0.1, Math.min(0.85, ratio));
+            layoutEl.style.setProperty(prop, ratio);
+        }
+
+        function onPointerUp() {
+            resizer.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            resizeTerm();
+        }
+
+        resizer.addEventListener('pointerdown', onPointerDown);
+    }
+
+    function resizeTerm() {
+        try {
+            var t = document.getElementById('terminal-container');
+            if (t) t.dispatchEvent(new Event('resizeTerm'));
+        } catch (e) {}
+    }
+
+    var layout = document.getElementById('session-layout');
+    var panelLeft = document.getElementById('panel-left');
+    var panelRight = document.getElementById('panel-right');
+
+    if (layout && panelLeft && panelRight) {
+        makeResizable(
+            document.getElementById('resizer-main-h'),
+            panelLeft, panelRight, layout, 'h'
+        );
+    }
+    if (panelLeft) {
+        makeResizable(
+            document.getElementById('resizer-left-v'),
+            document.getElementById('terminal-section'),
+            document.getElementById('file-section'),
+            panelLeft, 'v'
+        );
+    }
+    if (panelRight) {
+        makeResizable(
+            document.getElementById('resizer-right-v'),
+            document.getElementById('snippets-section'),
+            document.getElementById('transport-section'),
+            panelRight, 'v'
+        );
+    }
+
+    document.addEventListener('sendToTerminal', function (e) {
+        var ws = window._terminalWS;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.detail.command);
+        }
+    });
+
+    var _loadMonaco = function () {
+        var __require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } };
         var script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js';
-        script.onload = function() {
-            require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }});
-            require(['vs/editor/editor.main'], function() {
+        script.onload = function () {
+            __require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
+            __require(['vs/editor/editor.main'], function () {
                 var el = document.getElementById('editor-container');
-                if (el) {
-                    var ed = monaco.editor.create(el, {
-                        value: '', language: 'plaintext', theme: 'vs-dark',
-                        automaticLayout: true, minimap: {enabled: false},
-                        fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false,
-                    });
-                    ed._filePath = '';
-                    window._monacoEditor = ed;
-                    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() {
-                        var btn = document.getElementById('btn-editor-save');
-                        if (btn) btn.click();
-                    });
-                }
+                if (!el) return;
+                var ed = monaco.editor.create(el, {
+                    value: '', language: 'plaintext', theme: 'vs-dark',
+                    automaticLayout: true, minimap: { enabled: false },
+                    fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false,
+                });
+                ed._filePath = '';
+                window._monacoEditor = ed;
+                ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
+                    var btn = document.getElementById('btn-editor-save');
+                    if (btn) btn.click();
+                });
             });
         };
         document.head.appendChild(script);
     };
     if (typeof monaco === 'undefined') _loadMonaco();
 
-    document.addEventListener('keydown', function(e) {
+    document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
             var m = document.getElementById('editor-modal');
             if (m && m.classList.contains('open')) m.classList.remove('open');
         }
     });
-
-    document.addEventListener('sendToTerminal', function(e) {
-        var ws = window._terminalWS;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.detail.command);
-        }
-    });
+})();
 </script>
 {% endblock %}

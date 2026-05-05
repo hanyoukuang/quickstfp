@@ -28,25 +28,37 @@
             return;
         }
 
+        function statusMsg(msg, color) {
+            color = color || '#89b4fa';
+            term.write('\r\n\x1b[' + (color === '#f38ba8' ? '31' : '34') + 'm[' + msg + ']\x1b[0m\r\n');
+        }
+
         var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         var wsUrl = protocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(sessionId);
         var ws = null;
         var reconnectTimer = null;
         var reconnectDelay = 2000;
         var maxReconnectDelay = 30000;
+        var wasConnected = false;
 
         function connectWS() {
             if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
             try {
                 ws = new WebSocket(wsUrl);
             } catch (e) {
+                if (!wasConnected) statusMsg('WebSocket创建失败: ' + e.message, '#f38ba8');
                 scheduleReconnect();
                 return;
             }
 
+            if (!wasConnected) statusMsg('正在连接...', '#a6e3a1');
+
             ws.onopen = function () {
                 if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
                 reconnectDelay = 2000;
+                if (wasConnected) statusMsg('已重连', '#a6e3a1');
+                else statusMsg('已连接', '#a6e3a1');
+                wasConnected = true;
                 fitAddon.fit();
             };
 
@@ -60,11 +72,15 @@
 
             ws.onclose = function (event) {
                 ws = null;
+                if (event.code !== 1000 && event.code !== 1005) {
+                    statusMsg('连接断开 (code=' + event.code + '), 重连中...', '#f9e2af');
+                }
                 scheduleReconnect();
             };
 
             ws.onerror = function () {
                 if (ws) { ws.close(); ws = null; }
+                if (!wasConnected) statusMsg('连接失败, 请检查会话是否有效', '#f38ba8');
                 scheduleReconnect();
             };
 
@@ -92,6 +108,20 @@
 
         function resizeTerminal() {
             try { fitAddon.fit(); } catch (e) {}
+            sendResize();
+        }
+
+        function sendResize() {
+            try {
+                var msg = JSON.stringify({
+                    type: 'resize',
+                    cols: term.cols,
+                    rows: term.rows,
+                });
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(msg);
+                }
+            } catch (e) {}
         }
 
         var resizeTimeout = null;
@@ -123,8 +153,8 @@
             observer = new ResizeObserver(function () { resizeTerminal(); });
             observer.observe(container);
         } catch (e) {}
+        container.addEventListener('resizeTerm', function () { resizeTerminal(); });
 
-        // expose for cleanup
         window._terminalCleanup = function () {
             if (observer) { observer.disconnect(); }
             if (reconnectTimer) { clearTimeout(reconnectTimer); }
