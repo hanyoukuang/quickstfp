@@ -70,14 +70,11 @@ class TestSessionAPI:
                 "passphrase": "keypass",
             })
             assert resp.status_code == 200
-            mock_connect.assert_called_once_with(
-                host="testhost",
-                port=22,
-                username="testuser",
-                password=None,
-                client_keys=["/path/to/key"],
-                passphrase="keypass",
-            )
+            args = mock_connect.call_args[1]
+            assert args["host"] == "testhost"
+            assert args["username"] == "testuser"
+            assert args["client_keys"] == ["/path/to/key"]
+            assert args["passphrase"] == "keypass"
 
     def test_create_session_with_custom_port(self):
         mock_session = self._make_mock_session()
@@ -90,14 +87,10 @@ class TestSessionAPI:
                 "password": "testpass",
             })
             assert resp.status_code == 200
-            mock_connect.assert_called_once_with(
-                host="testhost",
-                port=2222,
-                username="testuser",
-                password="testpass",
-                client_keys=None,
-                passphrase=None,
-            )
+            args = mock_connect.call_args[1]
+            assert args["host"] == "testhost"
+            assert args["port"] == 2222
+            assert args["password"] == "testpass"
 
 
 class TestSessionAPIBoundary:

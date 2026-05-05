@@ -311,15 +311,14 @@ class TestSSHSessionConnect:
                 passphrase="keypass",
             )
 
-            mock_connect.assert_called_once_with(
-                host="testhost",
-                port=22,
-                username="testuser",
-                password=None,
-                client_keys=["/path/to/key"],
-                passphrase="keypass",
-                known_hosts=None,
-            )
+            call_args = mock_connect.call_args[1]
+            assert call_args["host"] == "testhost"
+            assert call_args["port"] == 22
+            assert call_args["username"] == "testuser"
+            assert call_args["password"] is None
+            assert call_args["client_keys"] == ["/path/to/key"]
+            assert call_args["passphrase"] == "keypass"
+            assert call_args["known_hosts"] is None
 
     @pytest.mark.asyncio
     async def test_connect_banner_failure_graceful(self):

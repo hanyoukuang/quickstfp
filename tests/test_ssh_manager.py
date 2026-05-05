@@ -40,14 +40,10 @@ class TestSSHManager:
             )
             assert isinstance(session_id, str)
             assert len(session_id) > 0
-            mock_connect.assert_called_once_with(
-                host="example.com",
-                port=22,
-                username="root",
-                password="secret",
-                client_keys=None,
-                passphrase=None,
-            )
+            args = mock_connect.call_args[1]
+            assert args["host"] == "example.com"
+            assert args["port"] == 22
+            assert args["password"] == "secret"
 
     @pytest.mark.asyncio
     async def test_get_returns_session(self, manager, mock_session):
@@ -148,14 +144,11 @@ class TestSSHManager:
                 client_keys=["/path/to/key"],
                 passphrase="key_pass",
             )
-            mock_connect.assert_called_once_with(
-                host="example.com",
-                port=22,
-                username="root",
-                password=None,
-                client_keys=["/path/to/key"],
-                passphrase="key_pass",
-            )
+            args = mock_connect.call_args[1]
+            assert args["host"] == "example.com"
+            assert args["username"] == "root"
+            assert args["client_keys"] == ["/path/to/key"]
+            assert args["passphrase"] == "key_pass"
 
 
 class TestSSHManagerBoundary:

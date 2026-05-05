@@ -55,6 +55,7 @@ class SSHSession:
             client_keys=client_keys,
             passphrase=passphrase,
             known_hosts=None,
+            connect_timeout=10,
         )
         process = await connection.create_process(
             request_pty=True,

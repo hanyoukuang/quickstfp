@@ -131,20 +131,18 @@ function deleteSite(id, authType) {
 }
 
 function connectSite(site) {
-    fetch('/api/sessions', {
+    function getMsg(d) {
+        if (d.detail && d.detail.message) return d.detail.message;
+        if (d.message) return d.message;
+        return 'Connection failed';
+    }
+    fetch('/api/sessions/connect-site?site_id=' + site.id + '&auth_type=' + site.auth_type, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            host: site.host, port: site.port, username: site.username,
-            password: site.password || undefined,
-            client_keys: site.key_path ? [site.key_path] : undefined,
-            passphrase: site.passphrase || undefined,
-        }),
     }).then(r => r.json()).then(d => {
         if (d.session_id) {
             window.location.href = '/sessions/' + d.session_id;
         } else {
-            toast(d.message || 'Connection failed', false);
+            toast(getMsg(d), false);
         }
     }).catch(e => toast('Connection failed: ' + e.message, false));
 }
