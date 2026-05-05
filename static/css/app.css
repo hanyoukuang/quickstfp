@@ -171,6 +171,18 @@ main { flex: 1; overflow: auto; }
     border-bottom: 1px solid var(--border);
     font-size: 12px;
 }
+.ti-btn {
+    padding: 1px 4px;
+    font-size: 11px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1.4;
+}
+.ti-btn:hover { background: var(--surface); color: var(--text); }
+.ti-btn-cancel:hover { color: var(--danger); border-color: var(--danger); }
 
 /* Snippets */
 .snippet-item {
