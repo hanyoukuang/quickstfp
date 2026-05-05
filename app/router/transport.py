@@ -1,4 +1,3 @@
-import io
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 
@@ -41,15 +40,22 @@ async def download_file(
     manager: SSHManager = Depends(get_ssh_manager),
 ):
     session = _get_session(session_id, manager)
+    filename = path.rstrip("/").split("/")[-1] or "download"
     try:
-        async with session.sftp.open(path, "rb") as remote_file:
-            content = await remote_file.read()
-        filename = path.rstrip("/").split("/")[-1] or "download"
+        file_size = await session.sftp.getsize(path)
 
-        return StreamingResponse(
-            io.BytesIO(content),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        async def file_stream():
+            async with session.sftp.open(path, "rb") as remote_file:
+                while True:
+                    chunk = await remote_file.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(file_size),
+        }
+        return StreamingResponse(file_stream(), media_type="application/octet-stream", headers=headers)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"ok": False, "message": str(e)})

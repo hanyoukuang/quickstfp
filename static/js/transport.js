@@ -115,6 +115,67 @@
             xhr.send(formData);
         }
 
+        function downloadFile(remotePath, filename, totalSize) {
+            var id = 'transport-' + Date.now();
+            var el = createProgressBar(id, '↓ ' + filename, totalSize || 0);
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/api/transport/' + encodeURIComponent(sessionId) + '/download?path=' + encodeURIComponent(remotePath));
+            xhr.responseType = 'blob';
+
+            var fill = el.querySelector('.fill');
+            var currentEl = el.querySelector('.current');
+            var totalEl = el.querySelector('.total');
+            var speedEl = el.querySelector('.speed');
+            var startTime = Date.now();
+
+            xhr.onprogress = function (e) {
+                if (e.lengthComputable) {
+                    var pct = Math.min(100, (e.loaded / e.total) * 100);
+                    if (fill) fill.style.width = pct + '%';
+                    if (currentEl) currentEl.textContent = formatSize(e.loaded);
+                    if (totalEl) totalEl.textContent = formatSize(e.total);
+
+                    var now = Date.now();
+                    var delta = now - startTime;
+                    var bytesPerSec = delta > 0 ? e.loaded / (delta / 1000) : 0;
+                    if (speedEl) speedEl.textContent = formatSpeed(bytesPerSec);
+                }
+            };
+
+            xhr.onload = function () {
+                if (xhr.status === 200 || xhr.status === 0) {
+                    var blob = xhr.response;
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+
+                    if (fill) { fill.style.width = '100%'; fill.style.background = 'var(--success)'; }
+                    if (speedEl) speedEl.textContent = '✓';
+                    showToast('Downloaded ' + filename, 'success');
+                } else {
+                    if (fill) { fill.style.background = 'var(--danger)'; fill.style.width = '100%'; }
+                    if (speedEl) speedEl.textContent = '✗';
+                    showToast('Download failed', 'error');
+                }
+            };
+
+            xhr.onerror = function () {
+                if (fill) { fill.style.background = 'var(--danger)'; fill.style.width = '100%'; }
+                if (speedEl) speedEl.textContent = '✗';
+                showToast('Download connection error', 'error');
+            };
+
+            xhr.send();
+        }
+
+        window.downloadFileWithProgress = downloadFile;
+
         function formatSpeed(bytesPerSec) {
             if (bytesPerSec >= 1024 * 1024 * 1024) return (bytesPerSec / (1024 * 1024 * 1024)).toFixed(2) + ' GB/s';
             if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + ' MB/s';

@@ -129,7 +129,7 @@
                 var icon = entry.type === 'dir' ? '📁' : '📄';
                 var nameEscaped = escapeHtml(entry.name || '');
                 var downloadBtn = entry.type === 'file'
-                    ? '<button class="btn-dl" title="Download" style="padding:1px 6px;font-size:12px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;line-height:1.5;" data-path="' + escapeHtml(entry.path || '') + '">⬇</button>'
+                    ? '<button class="btn-dl" title="Download" style="padding:1px 6px;font-size:12px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;line-height:1.5;" data-path="' + escapeHtml(entry.path || '') + '" data-name="' + escapeHtml(entry.name || '') + '" data-size="' + (entry.size || 0) + '">⬇</button>'
                     : '';
                 tr.innerHTML = '<td class="name"><span class="type-' + (entry.type || 'file') + '">' + icon + ' ' + nameEscaped + '</span></td>' +
                     '<td>' + formatSize(entry.size) + '</td>' +
@@ -153,7 +153,7 @@
                     if (e.target.closest('button') || e.target.tagName === 'BUTTON') return;
                     if (entry.type === 'file') {
                         if (isBinary(entry.name)) {
-                            downloadFile(entry.path);
+                            downloadFile(entry.path, entry.name, entry.size);
                             showToast('Binary file — downloading instead of opening editor', 'warning');
                         } else {
                             openFileEditor(entry.path, entry.name);
@@ -167,7 +167,7 @@
             tbody.querySelectorAll('.btn-dl').forEach(function (btn) {
                 btn.onclick = function (e) {
                     e.stopPropagation();
-                    downloadFile(btn.dataset.path);
+                    downloadFile(btn.dataset.path, btn.dataset.name, parseInt(btn.dataset.size) || 0);
                 };
             });
         }
@@ -187,7 +187,7 @@
                 if (!isBinary(entry.name)) {
                     items.push({ label: '✏️ Edit', action: function () { openFileEditor(entry.path, entry.name); } });
                 }
-                items.push({ label: '⬇️ Download', action: function () { downloadFile(entry.path); } });
+                items.push({ label: '⬇️ Download', action: function () { downloadFile(entry.path, entry.name, entry.size); } });
             }
             items.push({ label: '📋 Copy', action: function () { showCopyMoveDialog('copy', entry.path); } });
             items.push({ label: '📌 Move', action: function () { showCopyMoveDialog('move', entry.path); } });
@@ -239,8 +239,12 @@
             } catch (e) {}
         }
 
-        function downloadFile(path) {
-            window.open('/api/transport/' + encodeURIComponent(sessionId) + '/download?path=' + encodeURIComponent(path), '_blank');
+        function downloadFile(path, name, size) {
+            if (window.downloadFileWithProgress) {
+                window.downloadFileWithProgress(path, name, size);
+            } else {
+                window.open('/api/transport/' + encodeURIComponent(sessionId) + '/download?path=' + encodeURIComponent(path), '_blank');
+            }
         }
 
         function _applyEditorContent(path, content) {
