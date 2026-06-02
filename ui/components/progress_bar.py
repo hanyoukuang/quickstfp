@@ -15,6 +15,7 @@ class ProgressBar(QWidget):
     del_widget_msg = Signal()
     cancel_requested = Signal()
     pause_requested = Signal()
+    retry_requested = Signal()
 
     def __init__(self, filename: str, transport_type: str, icon: QIcon):
         super().__init__()
@@ -32,8 +33,10 @@ class ProgressBar(QWidget):
         self.speed_label.setFixedWidth(80)
 
         self.is_paused = False
-        self.pause_button = QPushButton("Pause")  # 确保这个属性被创建
-        # ------------------------------------------------
+        self.pause_button = QPushButton("Pause")
+        self.retry_button = QPushButton("重试")
+        self.retry_button.hide()
+        self._is_failed = False
 
         self.cancel_button = QPushButton("Cancel")
 
@@ -50,6 +53,7 @@ class ProgressBar(QWidget):
         # 按照顺序将新组件添加到布局中
         self.layout.addWidget(self.speed_label)
         self.layout.addWidget(self.pause_button)
+        self.layout.addWidget(self.retry_button)
 
         self.layout.addWidget(self.cancel_button)
         self.setLayout(self.layout)
@@ -63,7 +67,8 @@ class ProgressBar(QWidget):
         # 绑定 UI 的点击事件
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.cancel_button.clicked.connect(self.del_widget_msg.emit)
-        self.pause_button.clicked.connect(self._toggle_pause_ui)  # 此时 pause_button 已经存在
+        self.pause_button.clicked.connect(self._toggle_pause_ui)
+        self.retry_button.clicked.connect(self.retry_requested.emit)
 
     @Slot(int)
     def set_progress_range(self, max_value: int):
@@ -86,6 +91,17 @@ class ProgressBar(QWidget):
     @Slot(str)
     def set_speed_text(self, speed_str: str):
         self.speed_label.setText(speed_str)
+
+    def mark_completed(self):
+        self.filename_label.setText(f"✅ {self.transport_type}: {self.filename}")
+        self.pause_button.hide()
+        self.cancel_button.hide()
+
+    def mark_failed(self):
+        self._is_failed = True
+        self.filename_label.setText(f"❌ {self.transport_type}: {self.filename}")
+        self.pause_button.hide()
+        self.retry_button.show()
 
     def _toggle_pause_ui(self):
         """处理UI样式变化，并对外抛出信号"""

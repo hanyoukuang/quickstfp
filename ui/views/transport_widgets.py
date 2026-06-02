@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, \
     QListWidget, QListWidgetItem, QStyle, QApplication, QSlider, QSpinBox, QFormLayout, QFileDialog, \
-    QMessageBox, QSlider
+    QMessageBox
 
 from core.transport import GET, PUT
 from ui.components.progress_bar import ProgressBar
@@ -124,6 +124,8 @@ class TransferSetupWidget(QWidget):
         self.src_btn = QPushButton()
         self.src_dir_btn = QPushButton("选择本地文件夹")
         self.dst_btn = QPushButton()
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("排除模式: *.pyc;__pycache__;.git  (分号分隔)")
         self.transport_btn = QPushButton("开始传输")
 
         self.init_ui()
@@ -139,6 +141,7 @@ class TransferSetupWidget(QWidget):
         form.addRow(self.dst_edit, self.dst_btn)
         form.addRow(self.coro_num_label, self.coro_num_slider)
         form.addRow(QLabel("传输限速:"), self.speed_limit_spin)
+        form.addRow(QLabel("文件过滤:"), self.filter_edit)
         form.addRow(self.transport_btn, QLabel())
 
         self.setWindowFlags(Qt.WindowType.Tool)
@@ -191,10 +194,11 @@ class TransferSetupWidget(QWidget):
             return
 
         coro, speed = self.coro_num_slider.value(), self.speed_limit_spin.value()
+        patterns = self.filter_edit.text().strip()
         if self.mode == "GET":
-            self.transport_control_widget.get(src, dst, coro, speed)
+            self.transport_control_widget.get(src, dst, coro, speed, patterns)
         else:
-            self.transport_control_widget.put(src, dst, coro, speed)
+            self.transport_control_widget.put(src, dst, coro, speed, patterns)
             self.sftp_tab_widget.user_sftp_widget.remote_file_widget.refresh()
 
         self.close()
@@ -217,43 +221,50 @@ class TransportControlWidget(QListWidget):
     def clear_finish_task(self):
         self.task_list = [t for t in self.task_list if not t.is_cancel]
 
-    def _create_task_ui(self, pbar: ProgressBar, task):
-        """通用方法：绑定任务的信号与 UI"""
+    def _create_task_ui(self, pbar: ProgressBar, task, get_fn=None, put_fn=None):
         item = QListWidgetItem(self)
         item.setSizeHint(pbar.sizeHint())
         self.setItemWidget(item, pbar)
         self.addItem(item)
 
-        # 绑定核心层信号 -> UI 组件
         task.progress_updated.connect(pbar.set_progress_value)
         task.range_initialized.connect(pbar.set_progress_range)
         task.transport_failed.connect(pbar.warning_transport_fail_filename)
         task.speed_updated.connect(pbar.set_speed_text)
+        task.transport_completed.connect(pbar.mark_completed)
+        task.transport_failed.connect(lambda *_: pbar.mark_failed())
 
-        # 绑定 UI 操作 -> 核心层
         pbar.cancel_requested.connect(task.cancel)
         pbar.del_widget_msg.connect(lambda: self.takeItem(self.row(item)))
-
-        # --- 新增：绑定 UI 的暂停信号到 Core 的控制阀门 ---
         pbar.pause_requested.connect(task.toggle_pause)
+        pbar.retry_requested.connect(lambda: self._retry_task(item, pbar, task, get_fn, put_fn))
 
-    def get(self, src: str, dst: str, coro_num: int, speed_limit: int = 0):
+    def get(self, src: str, dst: str, coro_num: int, speed_limit: int = 0, patterns: str = ""):
         self.clear_finish_task()
         icon = self.FILE_ICON if self.info.is_file(src) else self.DIR_ICON
         pbar = ProgressBar(src, "下载", icon)
-
-        # 把 speed_limit 传给底层
         task = GET(src, dst, coro_num, speed_limit, self.info)
-        self._create_task_ui(pbar, task)
+        task.filter_patterns = patterns
+        self._create_task_ui(pbar, task,
+                             get_fn=lambda: self.get(src, dst, coro_num, speed_limit, patterns))
         self.task_list.append(task)
         task()
 
-    def put(self, src: str, dst: str, coro_num: int, speed_limit: int = 0):
+    def _retry_task(self, item, pbar, task, get_fn, put_fn):
+        self.takeItem(self.row(item))
+        self.task_list = [t for t in self.task_list if t is not task]
+        if get_fn:
+            get_fn()
+        elif put_fn:
+            put_fn()
+
+    def put(self, src: str, dst: str, coro_num: int, speed_limit: int = 0, patterns: str = ""):
         self.clear_finish_task()
         icon = self.FILE_ICON if os.path.isfile(src) else self.DIR_ICON
         pbar = ProgressBar(src, "上传", icon)
-
         task = PUT(src, dst, coro_num, speed_limit, self.info)
-        self._create_task_ui(pbar, task)
+        task.filter_patterns = patterns
+        self._create_task_ui(pbar, task,
+                             put_fn=lambda: self.put(src, dst, coro_num, speed_limit, patterns))
         self.task_list.append(task)
         task()

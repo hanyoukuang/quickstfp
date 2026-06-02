@@ -1,5 +1,6 @@
 # ui/views/remote_file_widget.py
 import os
+import tempfile
 
 from PySide6.QtCore import Qt, QModelIndex
 from PySide6.QtGui import QStandardItem
@@ -8,10 +9,10 @@ from PySide6.QtWidgets import QMessageBox, QInputDialog, QLineEdit, QMenu, QDial
 from core.session import SSHSFTPInfo
 from core.transport import GET, PUT
 from ui.components.progress_bar import ProgressBar
-from ui.components.terminal_widget import SSHPtyWidget
 from ui.views.editor_widgets import Edit, ExternalEditorWatcher, PermissionDialog
 from ui.views.base_remote_tree import BaseRemoteTreeWidget, NumericSortItem
 from ui.views.remote_drag_drop import RemoteDragDropMixin
+from ui.views.batch_rename_dialog import BatchRenameDialog
 from utils.file_utils import is_binary
 
 
@@ -91,6 +92,11 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
 
             chmod_action = context_menu.addAction("属性/权限")
             chmod_action.triggered.connect(lambda: self.change_permissions(item))
+
+        selected = self.selectedItems()
+        if len(selected) > 1:
+            batch_rename_action = context_menu.addAction("批量重命名")
+            batch_rename_action.triggered.connect(self._batch_rename)
 
         context_menu.exec(self.mapToGlobal(pos))
 
@@ -235,8 +241,8 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
             self.download_item(item)
 
     def download_item(self, item: QStandardItem) -> None:
-        os.makedirs("tmp", exist_ok=True)
-        self.sftp_tab_widget.transport_control_widget.get(self.get_item_path(item), "./tmp", 20)
+        download_dir = tempfile.gettempdir()
+        self.sftp_tab_widget.transport_control_widget.get(self.get_item_path(item), download_dir, 20)
 
     def del_items(self) -> None:
         text = "\n".join([item.text() for item in self.selectedItems()])
@@ -279,6 +285,27 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
     def copy_items(self) -> None:
         for item in self.selectedItems():
             self.copy_paths.append(self.get_item_path(item))
+
+    def _batch_rename(self):
+        items = self.selectedItems()
+        if len(items) < 2:
+            return
+        filenames = [item.text() for item in items]
+        dialog = BatchRenameDialog(self, filenames)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        rename_map = dialog.get_rename_map()
+        for item in items:
+            old_name = item.text()
+            if old_name in rename_map:
+                path = self.get_item_path(item)
+                parent_dir = "/".join(path.split("/")[:-1])
+                new_path = f"{parent_dir}/{rename_map[old_name]}"
+                try:
+                    self.info.rename(path, rename_map[old_name])
+                except Exception:
+                    pass
+        self.refresh()
 
 
 

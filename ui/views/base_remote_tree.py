@@ -3,9 +3,7 @@ import asyncio
 import datetime
 import logging
 import os
-import shutil
 import stat
-import tempfile
 
 from PySide6.QtCore import QFileInfo
 from PySide6.QtCore import Qt, QModelIndex, Signal, Slot
@@ -51,7 +49,6 @@ class BaseRemoteTreeWidget(QTreeView):
         self.DIR_ICON = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         self.icon_provider = QFileIconProvider()
         self.icon_cache = {}
-        self.icon_temp_dir = tempfile.mkdtemp(prefix="quickstfp_icons_")
 
         # 数据模型初始化
         self.model = QStandardItemModel()
@@ -73,35 +70,23 @@ class BaseRemoteTreeWidget(QTreeView):
 
         self.init_base_ui()
 
-    def cleanup_icon_dir(self) -> None:
-        """清理图标缓存临时目录，在组件关闭时调用"""
-        if hasattr(self, 'icon_temp_dir') and os.path.exists(self.icon_temp_dir):
-            try:
-                shutil.rmtree(self.icon_temp_dir)
-            except Exception:
-                pass
-
     def init_base_ui(self):
         self.current_folder_loaded_msg.connect(self.add_new_file)
         self.expanded.connect(self.on_item_expanded)
         self.sub_folder_loaded_msg.connect(self.on_sub_folder_loaded)
 
     def get_file_icon(self, filename: str):
-        """获取系统关联的文件图标：持久化 0 字节文件欺骗法"""
+        """获取系统关联的文件图标"""
         name, ext = os.path.splitext(filename)
         ext = ext.lower()
         cache_key = ext if ext else filename
 
         if cache_key not in self.icon_cache:
-            temp_filename = f"dummy{cache_key}" if ext else cache_key
-            temp_file_path = os.path.join(self.icon_temp_dir, temp_filename)
-            try:
-                if not os.path.exists(temp_file_path):
-                    with open(temp_file_path, 'w', encoding='utf-8') as f: pass
-                icon = self.icon_provider.icon(QFileInfo(temp_file_path))
-                self.icon_cache[cache_key] = self.FILE_ICON if icon.isNull() else icon
-            except Exception:
-                self.icon_cache[cache_key] = self.FILE_ICON
+            if ext:
+                icon = self.icon_provider.icon(QFileInfo(f"_.{ext[1:]}"))
+            else:
+                icon = self.icon_provider.icon(QFileInfo(filename))
+            self.icon_cache[cache_key] = self.FILE_ICON if icon.isNull() else icon
         return self.icon_cache[cache_key]
 
     def get_item_path(self, item: QStandardItem) -> str:

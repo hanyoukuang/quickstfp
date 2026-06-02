@@ -104,7 +104,7 @@ def export_sites(self):
 
 ## 🟠 高优先级问题 (High)
 
-### - [ ] HIGH-1: 零测试覆盖率
+### - [x] HIGH-1: 零测试覆盖率
 
 **问题**: 项目中不存在任何测试文件 (`test_*.py`, `conftest.py`, `pytest.ini` 等均不存在)。
 
@@ -213,7 +213,7 @@ def __del__(self):
 
 ---
 
-### - [ ] MED-2: `pyproject.toml` 占位符描述
+### - [x] MED-2: `pyproject.toml` 占位符描述
 
 **文件**: `pyproject.toml`
 
@@ -240,7 +240,7 @@ uv.lock
 
 ---
 
-### - [ ] MED-4: 可变默认参数 — `database/user_model.py`
+### - [x] MED-4: 可变默认参数 — `database/user_model.py`
 
 **文件**: `database/user_model.py`
 **行号**: 138, 144, 195-196
@@ -257,7 +257,7 @@ def update_key(self, ..., passphrase: str = "") -> ...:  # 行195-196
 
 ---
 
-### - [ ] MED-5: 大函数 — 超过 60 行
+### - [x] MED-5: 大函数 — 超过 60 行
 
 | 文件 | 方法 | 行数 |
 |------|------|------|
@@ -273,7 +273,7 @@ def update_key(self, ..., passphrase: str = "") -> ...:  # 行195-196
 
 ---
 
-### - [ ] MED-6: 部分函数缺少类型注解
+### - [x] MED-6: 部分函数缺少类型注解
 
 **示例**:
 ```python
@@ -289,7 +289,7 @@ def on_item_expanded(self, index: QModelIndex):  # item 未注解
 
 ---
 
-### - [ ] MED-7: 硬编码临时目录路径 — `remote_file_widget.py:318`
+### - [x] MED-7: 硬编码临时目录路径 — `remote_file_widget.py:318`
 
 **文件**: `ui/views/remote_file_widget.py`
 **行号**: 318
@@ -303,7 +303,7 @@ self.sftp_tab_widget.transport_control_widget.get(self.get_item_path(item), "./t
 
 ---
 
-### - [ ] MED-8: 未使用的导入
+### - [x] MED-8: 未使用的导入
 
 ```python
 # remote_file_widget.py:14
@@ -377,7 +377,7 @@ self.connection = await asyncssh.connect(
 
 ## 🟢 低优先级问题 (Low)
 
-### - [ ] LOW-1: 无效注释语句 — `remote_drag_drop.py:152`
+### - [x] LOW-1: 无效注释语句 — `remote_drag_drop.py:152`
 
 **文件**: `ui/views/remote_drag_drop.py`
 **行号**: 152
@@ -401,7 +401,7 @@ self.connection = await asyncssh.connect(
 
 ---
 
-### - [ ] LOW-3: 数据库缺少迁移机制
+### - [x] LOW-3: 数据库缺少迁移机制
 
 `user_model.py:create_table()` 使用 `CREATE TABLE IF NOT EXISTS`，只能创建初始表结构。如果未来需要添加字段/修改表结构，无法自动迁移。
 
@@ -409,7 +409,7 @@ self.connection = await asyncssh.connect(
 
 ---
 
-### - [ ] LOW-4: 宽度硬编码 — `main.py:21`
+### - [x] LOW-4: 宽度硬编码 — `main.py:21`
 
 ```python
 self.resize(1100, 700)
@@ -419,7 +419,7 @@ self.resize(1100, 700)
 
 ---
 
-### - [ ] LOW-5: `progress_bar.py` 存在重复导入
+### - [x] LOW-5: `progress_bar.py` 存在重复导入
 
 **文件**: `ui/views/transport_widgets.py`
 **行号**: 5-7
@@ -431,7 +431,7 @@ from PySide6.QtWidgets import QWidget, ..., QSlider, QSpinBox, ...,  QSlider
 
 ---
 
-### - [ ] LOW-6: 图标缓存使用临时文件 hack — `base_remote_tree.py:77-93`
+### - [x] LOW-6: 图标缓存使用临时文件 hack — `base_remote_tree.py:77-93`
 
 **文件**: `base_remote_tree.py:77-93`
 
@@ -579,7 +579,7 @@ quickstfp 在 ~3780 行 Python 中已实现的功能已相当丰富：
 
 ---
 
-#### - [ ] FEAT-3: SSH 保活 (Keepalive)
+#### - [x] FEAT-3: SSH 保活 (Keepalive)
 
 **灵感**: 所有商业 SSH 客户端
 

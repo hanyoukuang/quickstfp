@@ -31,6 +31,7 @@ class SSHSFTPInfo(QThread):
             client_keys: Optional[List[str]] = None,
             passphrase: Optional[str] = None,
             verify_host_key: bool = True,
+            startup_commands: Optional[List[str]] = None,
     ):
         super().__init__()
         self.host = host
@@ -41,6 +42,9 @@ class SSHSFTPInfo(QThread):
         self.passphrase = passphrase
         self.banner_msg = ""
         self.verify_host_key = verify_host_key
+        self.startup_commands = startup_commands or []
+        self._reconnect_enabled = True
+        self._reconnect_delay = 1
 
         # 用于在主线程和后台线程间同步连接状态
         self.connect_is_ready = False
@@ -127,6 +131,8 @@ class SSHSFTPInfo(QThread):
                 passphrase=self.passphrase,
                 known_hosts=asyncssh.known_hosts.KnownHosts() if self.verify_host_key else None,
                 connect_timeout=10,
+                keepalive_interval=30,
+                keepalive_count_max=3,
             )
         except asyncssh.HostKeyNotVerifiable as e:
             fingerprint = ":".join(f"{b:02x}" for b in e.host_key.fingerprint)
@@ -143,10 +149,26 @@ class SSHSFTPInfo(QThread):
         )
         self.sftp = await self.connection.start_sftp_client()
 
+        for cmd in self.startup_commands:
+            try:
+                self.process.stdin.write(cmd + "\n")
+                await self.process.stdin.drain()
+            except Exception:
+                pass
+
     def _run_sync(self, coro):
-        """统一封装异步协程的同步等待"""
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
         return self._wait_future(future)
+
+    def forward_local_port(self, listen_host: str, listen_port: int, remote_host: str, remote_port: int):
+        async def _fwd():
+            await self.connection.forward_local_port(listen_host, listen_port, remote_host, remote_port)
+        self._run_sync(_fwd())
+
+    def forward_remote_port(self, listen_host: str, listen_port: int, remote_host: str, remote_port: int):
+        async def _fwd():
+            await self.connection.forward_remote_port(listen_host, listen_port, remote_host, remote_port)
+        self._run_sync(_fwd())
 
     def is_file(self, path: str) -> bool:
         return self._run_sync(self.sftp.isfile(path))

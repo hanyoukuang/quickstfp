@@ -58,7 +58,20 @@ class UserInfoDB:
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
         self.crypto = CryptoManager()  # 初始化加密器
+        self._migrate_schema()
         self.create_table()
+
+    def _migrate_schema(self) -> None:
+        """基于版本号的数据库迁移机制"""
+        self.cursor.execute("CREATE TABLE IF NOT EXISTS SchemaVersion (version INTEGER)")
+        self.cursor.execute("SELECT version FROM SchemaVersion")
+        row = self.cursor.fetchone()
+        current_version = row[0] if row else 0
+        self.conn.commit()
+
+        if current_version < 1:
+            self.cursor.execute("INSERT OR REPLACE INTO SchemaVersion (version) VALUES (1)")
+            self.conn.commit()
 
     def create_table(self) -> None:
         """初始化数据表结构"""
@@ -148,7 +161,7 @@ class UserInfoDB:
     # 秘钥登录相关的数据操作
     # ==========================================
 
-    def query_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> List[Tuple]:
+    def query_key(self, host: str, port: int, username: str, key_path: str, passphrase: Optional[str] = None) -> List[Tuple]:
         """查询秘钥数据，使用 SQL 过滤 host/port/username/key_path 后仅解密匹配行"""
         sql = "SELECT * FROM Key WHERE host = ? AND port = ? AND username = ? AND key_path = ?"
         self.cursor.execute(sql, (host, port, username, key_path))
@@ -156,7 +169,7 @@ class UserInfoDB:
         return [(r[0], r[1], r[2], r[3], r[4], self.crypto.decrypt(r[5]))
                 for r in rows if self.crypto.decrypt(r[5]) == passphrase]
 
-    def insert_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> None:
+    def insert_key(self, host: str, port: int, username: str, key_path: str, passphrase: Optional[str] = None) -> None:
         """
         新增一条秘钥登录记录，在写入数据库前将 passphrase 加密
         """
@@ -164,7 +177,7 @@ class UserInfoDB:
             return
 
         # 加密 passphrase
-        encrypted_passphrase = self.crypto.encrypt(passphrase)
+        encrypted_passphrase = self.crypto.encrypt(passphrase or "")
 
         sql = "INSERT INTO Key(host, port, username, key_path, passphrase) VALUES (?, ?, ?, ?, ?)"
         self.cursor.execute(sql, (host, port, username, key_path, encrypted_passphrase))
@@ -214,9 +227,9 @@ class UserInfoDB:
         self.conn.commit()
 
     def update_key(self, idx: int, host: str, port: int, username: str, key_path: str,
-                   passphrase: str = "") -> None:
+                   passphrase: Optional[str] = None) -> None:
         """更新秘钥登录记录"""
-        encrypted_passphrase = self.crypto.encrypt(passphrase)
+        encrypted_passphrase = self.crypto.encrypt(passphrase or "")
         sql = "UPDATE Key SET host=?, port=?, username=?, key_path=?, passphrase=? WHERE id=?"
         self.cursor.execute(sql, (host, port, username, key_path, encrypted_passphrase, idx))
         self.conn.commit()

@@ -147,6 +147,3 @@ class RemoteDragDropMixin:
                         QMessageBox.warning(self, "移动失败", f"{src_path} 移动失败:\n{e}")
         else:
             super().dropEvent(event)
-
-
-# 导入 PySide6.QtCore.Qt 用于类内部 (已在方法中局部导入)

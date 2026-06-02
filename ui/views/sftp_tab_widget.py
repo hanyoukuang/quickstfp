@@ -1,5 +1,5 @@
 # ui/views/sftp_tab_widget.py
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QStackedWidget
 
 from core.session import SSHSFTPInfo
@@ -17,12 +17,10 @@ class SFTPTabWidget(QWidget):
         super().__init__()
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # 启动核心 Session
         self.info = SSHSFTPInfo(host, port, username, password, client_keys, passphrase, verify_host_key)
         self.info.start()
         self.info.wait_for_connection()
 
-        # 包含各项功能面板
         self.control_widget = ControlWidget(self)
         self.transport_control_widget = TransportControlWidget(self)
         self.user_sftp_widget = UserSFTPWidget(self)
@@ -31,6 +29,26 @@ class SFTPTabWidget(QWidget):
         self.stacked_widget = QStackedWidget()
         self.hbox = QHBoxLayout(self)
         self.init_ui()
+
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._check_health)
+        self._health_timer.start(30000)
+        self._health_status = True
+
+    def _check_health(self):
+        try:
+            path = self.info.getcwd()
+            if not self._health_status:
+                self.window().tab_widget.setTabText(
+                    self.window().tab_widget.indexOf(self),
+                    self.window().tab_widget.tabText(self.window().tab_widget.indexOf(self)).replace("🔴", "🟢"))
+                self._health_status = True
+        except Exception:
+            if self._health_status:
+                idx = self.window().tab_widget.indexOf(self)
+                name = self.window().tab_widget.tabText(idx).replace("🟢", "")
+                self.window().tab_widget.setTabText(idx, f"🔴 {name}")
+                self._health_status = False
 
     def init_ui(self):
         # 组装面板
@@ -49,9 +67,9 @@ class SFTPTabWidget(QWidget):
     def closeEvent(self, event, /):
         super().closeEvent(event)
 
-        # 使用新增加的优雅退出方法清理所有连接和挂起的 Task
+        self._health_timer.stop()
+
         self.user_sftp_widget.remote_file_widget.external_watcher.cleanup_temp_files()
-        self.user_sftp_widget.remote_file_widget.cleanup_icon_dir()
         self.info.close_session()
 
         # 退出 QThread

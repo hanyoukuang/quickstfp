@@ -8,6 +8,9 @@ from ui.views.local_widgets import LocalFileWidget
 from ui.views.remote_file_widget import RemoteFileWidget
 from ui.views.transport_widgets import TransferSetupWidget
 from ui.views.snippets_widget import QuickSnippetsWidget
+from ui.views.directory_diff_dialog import DirectoryDiffDialog
+import os
+import datetime
 
 
 class ControlWidget(QListWidget):
@@ -57,6 +60,12 @@ class UserSFTPWidget(QWidget):
         self.show_hidden_btn = QPushButton("👁️ 显示隐藏")
         self.show_hidden_btn.setCheckable(True)
 
+        self.sync_browse_btn = QPushButton("🔗 同步浏览")
+        self.sync_browse_btn.setCheckable(True)
+        self._sync_enabled = False
+
+        self.diff_btn = QPushButton("📊 目录比较")
+
         self.init_ui()
         self.remote_file_widget.refresh()
 
@@ -71,6 +80,10 @@ class UserSFTPWidget(QWidget):
         remote_hbox.addWidget(self.search_edit)
 
         remote_hbox.addWidget(self.show_hidden_btn)
+
+        remote_hbox.addWidget(self.sync_browse_btn)
+
+        remote_hbox.addWidget(self.diff_btn)
 
         remote_hbox.addWidget(self.get_button)
         remote_hbox.addWidget(self.put_button)
@@ -101,12 +114,34 @@ class UserSFTPWidget(QWidget):
 
         # 绑定 ComboBox 的激活信号（回车或点击下拉选项）
         self.path_combo.activated.connect(self.on_path_combo_activated)
+        self.sync_browse_btn.toggled.connect(self._toggle_sync_browse)
         self.show_hidden_btn.toggled.connect(self.toggle_hidden_files)
         self.search_edit.returnPressed.connect(self.on_search)
         self.search_edit.textChanged.connect(self.on_search_text_changed)
 
+        self.local_file_widget.tree.doubleClicked.connect(self._on_local_navigate)
+        self.diff_btn.clicked.connect(self._show_diff)
+
+    def _toggle_sync_browse(self, checked: bool):
+        self._sync_enabled = checked
+
+    def _on_local_navigate(self, index):
+        if not self._sync_enabled:
+            return
+        path = self.local_file_widget.model.filePath(index)
+        basename = path.split("/")[-1]
+        try:
+            remote_path = f"{self.info.getcwd()}/{basename}"
+            if self.info.is_file(remote_path):
+                self.info.chdir(self.info.getcwd())
+            else:
+                self.info.chdir(remote_path)
+            self.remote_file_widget.refresh()
+            self.display_path(self.info.realpath("."))
+        except Exception:
+            pass
+
     def on_search(self):
-        """按下回车后触发"""
         keyword = self.search_edit.text().strip()
         if keyword:
             self.remote_file_widget.search(keyword)
@@ -165,15 +200,40 @@ class UserSFTPWidget(QWidget):
 
     @Slot(str)
     def display_path(self, path: str):
-        """当系统路径改变时，更新下拉框并沉淀历史记录"""
-        self.path_combo.blockSignals(True)  # 暂时阻断信号，防止触发 activated 导致死循环
-
-        # 如果路径不在历史记录里，则把它插入到最上面
+        self.path_combo.blockSignals(True)
         if self.path_combo.findText(path) == -1:
             self.path_combo.insertItem(0, path)
-
         self.path_combo.setCurrentText(path)
         self.path_combo.blockSignals(False)
+
+    def _show_diff(self):
+        local_idx = self.local_file_widget.tree.rootIndex()
+        local_dir = self.local_file_widget.model.filePath(local_idx)
+        remote_dir = self.info.getcwd()
+
+        local_files = {}
+        try:
+            for entry in os.scandir(local_dir):
+                local_files[entry.name] = {"size": entry.stat().st_size}
+        except Exception:
+            pass
+
+        remote_files = {}
+        try:
+            self.remote_file_widget.refresh()
+            for name, item in self.remote_file_widget.all_files_dict.items():
+                idx = item.index()
+                size_item = self.remote_file_widget.model.itemFromIndex(idx.siblingAtColumn(1))
+                time_item = self.remote_file_widget.model.itemFromIndex(idx.siblingAtColumn(3))
+                remote_files[name] = {
+                    "size": size_item.text() if size_item else "",
+                    "time": time_item.text() if time_item else "",
+                }
+        except Exception:
+            pass
+
+        dialog = DirectoryDiffDialog(self, local_files, remote_files)
+        dialog.exec()
 
 
 class TerminalPanel(QWidget):
@@ -202,7 +262,6 @@ class TerminalPanel(QWidget):
         self.splitter.addWidget(self.ssh_pty_widget)
         self.splitter.addWidget(self.snippets_widget)
 
-        # 默认让终端占据比较大的空间
         self.splitter.setStretchFactor(0, 4)
         self.splitter.setStretchFactor(1, 1)
 

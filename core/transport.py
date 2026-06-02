@@ -195,6 +195,7 @@ class Transport(QObject):
     transport_failed = Signal(str)  # 传输失败的异常文件信息
     transport_cancelled = Signal()  # 任务被取消
     speed_updated = Signal(str)  # 网速
+    transport_completed = Signal()  # 所有传输任务完成
 
     def __init__(self, src: str, loc: str, co_num: int, speed_limit: int, info: 'SSHSFTPInfo') -> None:
         super().__init__()
@@ -208,6 +209,7 @@ class Transport(QObject):
         self.loop = info.loop
         self.transport_coro_list = []
         self.pool: Optional[ImmediateSchedulerPool] = None
+        self.filter_patterns = ""
 
         self.transport_fail_filename = ""
         self._total_progress_size = 0
@@ -247,6 +249,8 @@ class Transport(QObject):
         # 这里保留原来的逻辑：通知具体哪些文件失败了
         if self.transport_fail_filename:
             self.transport_failed.emit(f"部分文件读写失败:\n{self.transport_fail_filename}")
+
+        self.transport_completed.emit()
 
     def start(self):
         """启动传输任务（调度到后台事件循环）"""
@@ -291,6 +295,17 @@ class Transport(QObject):
         if 0 < target_size < source_size:
             return 'ab', target_size, False
         return 'wb', 0, False
+
+    def _should_skip_file(self, filename: str) -> bool:
+        patterns = self.filter_patterns.strip()
+        if not patterns:
+            return False
+        from fnmatch import fnmatch
+        for p in patterns.split(";"):
+            p = p.strip()
+            if p and (fnmatch(filename, p) or p in filename):
+                return True
+        return False
 
 
 class GET(Transport):
@@ -349,6 +364,8 @@ class GET(Transport):
             if entry.attrs.type == 2:  # Directory
                 task_list.append(asyncio.create_task(self.search_transport_file(next_src, next_loc)))
             else:  # File
+                if self._should_skip_file(entry.filename):
+                    continue
                 total += entry.attrs.size
                 self.transport_coro_list.append((entry.attrs.size, self._transport_file(next_src, next_loc)))
 
@@ -428,6 +445,8 @@ class PUT(Transport):
             if entry.is_dir():
                 total_size += await self.search_transport_file(next_src, next_loc)
             else:
+                if self._should_skip_file(entry.name):
+                    continue
                 self.transport_coro_list.append((entry.stat().st_size, self._transport_file(next_src, next_loc)))
                 total_size += entry.stat().st_size
         return total_size

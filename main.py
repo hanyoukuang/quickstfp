@@ -7,8 +7,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QMessageBox
 
 # 导入核心会话界面
 from ui.views.sftp_tab_widget import SFTPTabWidget
-# 导入我们上一步做好的站点管理器
 from ui.views.site_manager import SiteManagerWidget
+from ui.views.port_forward_dialog import PortForwardDialog
 
 
 class MainWindow(QMainWindow):
@@ -19,7 +19,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("QuickSFTP - 多会话终端")
-        self.resize(1100, 700)
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.resize(int(screen.width() * 0.7), int(screen.height() * 0.65))
 
         # 1. 初始化中心 TabWidget
         self.tab_widget = QTabWidget()
@@ -33,8 +34,75 @@ class MainWindow(QMainWindow):
         new_session_action.triggered.connect(self.open_site_manager)
         toolbar.addAction(new_session_action)
 
+        self.dark_mode_action = QAction("🌙 暗色模式", self)
+        self.dark_mode_action.setCheckable(True)
+        self.dark_mode_action.triggered.connect(self._toggle_dark_mode)
+        toolbar.addAction(self.dark_mode_action)
+
+        self.broadcast_action = QAction("📡 广播模式", self)
+        self.broadcast_action.setCheckable(True)
+        self.broadcast_action.triggered.connect(self._toggle_broadcast)
+        toolbar.addAction(self.broadcast_action)
+
+        port_fwd_action = QAction("🔗 端口转发", self)
+        port_fwd_action.triggered.connect(self._open_port_forward)
+        toolbar.addAction(port_fwd_action)
+
+        self._dark_mode = False
+        self._apply_theme()
+        self._broadcast_enabled = False
+
+        self.site_manager = None
+
+    def _toggle_broadcast(self, checked: bool):
+        self._broadcast_enabled = checked
+
+    def _broadcast_input(self, data: str):
+        if not self._broadcast_enabled:
+            return
+        for i in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(i)
+            if hasattr(widget, 'terminal_panel'):
+                bridge = widget.terminal_panel.ssh_pty_widget.bridge
+                bridge.on_input(data)
+
+    def _open_port_forward(self):
+        current = self.tab_widget.currentWidget()
+        if current and hasattr(current, 'info'):
+            dialog = PortForwardDialog(self, session=current.info)
+            dialog.exec()
+
         # 3. 存放站点管理器的引用，防止被垃圾回收
         self.site_manager = None
+
+    def _toggle_dark_mode(self, checked: bool):
+        self._dark_mode = checked
+        self.dark_mode_action.setText("☀️ 亮色模式" if checked else "🌙 暗色模式")
+        self._apply_theme()
+
+    def _apply_theme(self):
+        if not self._dark_mode:
+            self.setStyleSheet("")
+            return
+        self.setStyleSheet("""
+            QMainWindow, QWidget { background-color: #2b2b2b; color: #e0e0e0; }
+            QTabWidget::pane { background: #333; border: 1px solid #555; }
+            QTabBar::tab { background: #3c3c3c; color: #ccc; padding: 5px 12px; }
+            QTabBar::tab:selected { background: #555; color: #fff; }
+            QToolBar { background: #333; border: none; }
+            QLineEdit, QComboBox, QSpinBox { background: #3c3c3c; color: #fff; border: 1px solid #555; }
+            QPushButton { background: #444; color: #fff; padding: 4px 10px; border-radius: 3px; }
+            QPushButton:hover { background: #555; }
+            QListWidget, QTreeView { background: #333; color: #e0e0e0; }
+            QListWidget::item:selected, QTreeView::item:selected { background: #4a6da7; }
+            QHeaderView::section { background: #3c3c3c; color: #ccc; border: 1px solid #555; }
+            QProgressBar { background: #3c3c3c; border: 1px solid #555; text-align: center; }
+            QProgressBar::chunk { background: #4a9; }
+            QSplitter::handle { background: #555; }
+            QMenu { background: #333; color: #e0e0e0; border: 1px solid #555; }
+            QMenu::item:selected { background: #4a6da7; }
+            QDialog { background: #2b2b2b; }
+        """)
 
         # 启动时自动打开一次站点管理器
 

@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+import re
+from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget, \
@@ -60,8 +62,39 @@ class QuickSnippetsWidget(QWidget):
             "global": [],
             "sites": {}
         }
+        self._history_file = get_data_path("quickstfp_command_history.json")
+        self._history: list[dict] = []
+        self._load_history()
         self.init_ui()
         self.load_snippets()
+
+    def _substitute_template(self, cmd: str, remote_path: str = "", session_url: str = "") -> str:
+        """FEAT-17: 替换命令模板变量"""
+        result = cmd
+
+        def _prompt_replacer(match):
+            prompt_text = match.group(1)
+            text, ok = QInputDialog.getText(self, "命令参数", prompt_text)
+            if ok and text:
+                return text
+            return match.group(0)
+
+        result = re.sub(r'!\?(.+?)!', _prompt_replacer, result)
+        result = result.replace("!S", session_url or f"{self.site_id}")
+        result = result.replace("!", remote_path)
+        return result
+
+    def _load_history(self):
+        if os.path.exists(self._history_file):
+            try:
+                with open(self._history_file, 'r', encoding='utf-8') as f:
+                    self._history = json.load(f)
+            except Exception:
+                self._history = []
+
+    def _save_history(self):
+        with open(self._history_file, 'w', encoding='utf-8') as f:
+            json.dump(self._history[-500:], f, ensure_ascii=False, indent=2)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -225,9 +258,17 @@ class QuickSnippetsWidget(QWidget):
             self.save_snippets()
             self.refresh_tree()
 
-    def execute_item(self, item, column):
+    def execute_item(self, item, column, remote_path: str = ""):
         meta = item.data(0, Qt.ItemDataRole.UserRole)
         if not meta: return
 
         snip = meta["data"]
-        self.command_triggered.emit(snip['cmd'] + '\r')
+        cmd = self._substitute_template(snip['cmd'], remote_path)
+        self._history.append({
+            "cmd": cmd.strip(),
+            "name": snip.get("name", ""),
+            "time": datetime.now().isoformat(),
+            "site": self.site_id,
+        })
+        self._save_history()
+        self.command_triggered.emit(cmd + '\r')

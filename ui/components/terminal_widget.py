@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, Signal, QUrl
@@ -10,6 +12,8 @@ from core.session import SSHSFTPInfo
 
 logger = logging.getLogger(__name__)
 
+LOG_DIR = Path.home() / ".config" / "quickstfp" / "logs"
+
 
 class TerminalBridge(QObject):
     output = Signal(str)
@@ -17,6 +21,32 @@ class TerminalBridge(QObject):
     def __init__(self, info: SSHSFTPInfo):
         super().__init__()
         self.info = info
+        self._log_file = None
+        self._logging_enabled = False
+
+    def enable_logging(self) -> str:
+        site = f"{self.info.username}@{self.info.host}"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = str(LOG_DIR / f"{site}_{ts}.log")
+        self._log_file = open(path, 'w', encoding='utf-8')
+        self._logging_enabled = True
+        logger.info(f"Terminal logging started: {path}")
+        return path
+
+    def disable_logging(self):
+        self._logging_enabled = False
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None
+
+    def _write_to_log(self, data: str):
+        if self._logging_enabled and self._log_file:
+            try:
+                self._log_file.write(data)
+                self._log_file.flush()
+            except Exception:
+                self._logging_enabled = False
 
     @Slot(int, int)
     def start(self, cols: int, rows: int):
@@ -32,15 +62,18 @@ class TerminalBridge(QObject):
     async def run(self):
         while True:
             try:
-                # 此时，积攒在缓冲区里的 404 字节 Welcome 信息会被瞬间读出并发给前端！
                 data = await self.info.process.stdout.read(8192)
                 if data:
                     self.output.emit(data)
+                    self._write_to_log(data)
                 else:
                     break
             except Exception as e:
                 logger.error(f"Terminal read error: {e}")
                 break
+
+    def close_log(self):
+        self.disable_logging()
 
     @Slot(str)
     def on_input(self, data: str):

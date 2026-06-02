@@ -2,12 +2,13 @@
 import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
     QFormLayout, QLineEdit, QPushButton, QComboBox, QCheckBox, QStackedWidget,
-    QMessageBox, QFileDialog, QLabel
+    QMessageBox, QFileDialog, QLabel, QInputDialog
 )
 
 from database.user_model import UserInfoDB
+from ui.views.ssh_keygen_dialog import SSHKeygenDialog
 
 
 class SiteManagerWidget(QWidget):
@@ -31,21 +32,39 @@ class SiteManagerWidget(QWidget):
         main_layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # ========== 左侧：站点列表 ==========
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_widget = self._init_left_panel()
+        right_widget = self._init_right_panel()
 
-        self.site_list = QListWidget()
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        main_layout.addWidget(splitter)
+
+        self.clear_form()
+
+    def _init_left_panel(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.site_list = QTreeWidget()
+        self.site_list.setHeaderHidden(True)
+        self.site_list.setIndentation(16)
         self.site_list.itemClicked.connect(self.on_site_selected)
+
+        self._folders = {}
 
         btn_layout = QHBoxLayout()
         self.btn_new = QPushButton("新建站点")
         self.btn_delete = QPushButton("删除站点")
+        self.btn_new_folder = QPushButton("新建分组")
         self.btn_new.clicked.connect(self.create_new_site)
         self.btn_delete.clicked.connect(self.delete_site)
+        self.btn_new_folder.clicked.connect(self._new_folder)
         btn_layout.addWidget(self.btn_new)
         btn_layout.addWidget(self.btn_delete)
+        btn_layout.addWidget(self.btn_new_folder)
 
         io_layout = QHBoxLayout()
         self.btn_import = QPushButton("导入")
@@ -55,17 +74,17 @@ class SiteManagerWidget(QWidget):
         io_layout.addWidget(self.btn_import)
         io_layout.addWidget(self.btn_export)
 
-        left_layout.addWidget(QLabel("<b>保存的会话</b>"))
-        left_layout.addWidget(self.site_list)
-        left_layout.addLayout(btn_layout)
-        left_layout.addLayout(io_layout)
+        layout.addWidget(QLabel("<b>保存的会话</b>"))
+        layout.addWidget(self.site_list)
+        layout.addLayout(btn_layout)
+        layout.addLayout(io_layout)
+        return widget
 
-        # ========== 右侧：详情编辑与连接 ==========
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(10, 0, 0, 0)
+    def _init_right_panel(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 0, 0, 0)
 
-        # 基础表单
         form_layout = QFormLayout()
         self.host_edit = QLineEdit()
         self.port_edit = QLineEdit("22")
@@ -82,39 +101,8 @@ class SiteManagerWidget(QWidget):
         self.verify_host_checkbox.setChecked(True)
         form_layout.addRow(self.verify_host_checkbox)
 
-        # 认证方式堆叠面板 (密码 / 私钥)
-        self.auth_stacked_widget = QStackedWidget()
+        self.auth_stacked_widget = self._init_auth_panel()
 
-        # 密码面板
-        pass_widget = QWidget()
-        pass_layout = QFormLayout(pass_widget)
-        pass_layout.setContentsMargins(0, 0, 0, 0)
-        self.password_edit = QLineEdit()
-        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        pass_layout.addRow("密码:", self.password_edit)
-
-        # 私钥面板
-        key_widget = QWidget()
-        key_layout = QFormLayout(key_widget)
-        key_layout.setContentsMargins(0, 0, 0, 0)
-        self.key_path_edit = QLineEdit()
-        self.btn_select_key = QPushButton("浏览...")
-        self.btn_select_key.clicked.connect(self.select_key_file)
-
-        key_hbox = QHBoxLayout()
-        key_hbox.addWidget(self.key_path_edit)
-        key_hbox.addWidget(self.btn_select_key)
-
-        self.passphrase_edit = QLineEdit()
-        self.passphrase_edit.setEchoMode(QLineEdit.EchoMode.Password)
-
-        key_layout.addRow("私钥文件:", key_hbox)
-        key_layout.addRow("Passphrase:", self.passphrase_edit)
-
-        self.auth_stacked_widget.addWidget(pass_widget)
-        self.auth_stacked_widget.addWidget(key_widget)
-
-        # 底部操作按钮
         action_layout = QHBoxLayout()
         action_layout.addStretch()
         self.btn_save = QPushButton("保存")
@@ -124,21 +112,43 @@ class SiteManagerWidget(QWidget):
         action_layout.addWidget(self.btn_save)
         action_layout.addWidget(self.btn_connect)
 
-        # 组装右侧
-        right_layout.addWidget(QLabel("<b>连接详情</b>"))
-        right_layout.addLayout(form_layout)
-        right_layout.addWidget(self.auth_stacked_widget)
-        right_layout.addStretch()
-        right_layout.addLayout(action_layout)
+        layout.addWidget(QLabel("<b>连接详情</b>"))
+        layout.addLayout(form_layout)
+        layout.addWidget(self.auth_stacked_widget)
+        layout.addStretch()
+        layout.addLayout(action_layout)
+        return widget
 
-        # 组装主界面
-        splitter.addWidget(left_widget)
-        splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        main_layout.addWidget(splitter)
+    def _init_auth_panel(self) -> QStackedWidget:
+        stacked = QStackedWidget()
 
-        self.clear_form()
+        pass_widget = QWidget()
+        pass_layout = QFormLayout(pass_widget)
+        pass_layout.setContentsMargins(0, 0, 0, 0)
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        pass_layout.addRow("密码:", self.password_edit)
+        stacked.addWidget(pass_widget)
+
+        key_widget = QWidget()
+        key_layout = QFormLayout(key_widget)
+        key_layout.setContentsMargins(0, 0, 0, 0)
+        self.key_path_edit = QLineEdit()
+        self.btn_select_key = QPushButton("浏览...")
+        self.btn_select_key.clicked.connect(self.select_key_file)
+        key_hbox = QHBoxLayout()
+        key_hbox.addWidget(self.key_path_edit)
+        key_hbox.addWidget(self.btn_select_key)
+        self.btn_gen_key = QPushButton("生成密钥")
+        self.btn_gen_key.clicked.connect(self.generate_key)
+        key_hbox.addWidget(self.btn_gen_key)
+        self.passphrase_edit = QLineEdit()
+        self.passphrase_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        key_layout.addRow("私钥文件:", key_hbox)
+        key_layout.addRow("Passphrase:", self.passphrase_edit)
+        stacked.addWidget(key_widget)
+
+        return stacked
 
     def closeEvent(self, event):
         if hasattr(self, 'userinfo_db') and self.userinfo_db:
@@ -244,23 +254,36 @@ class SiteManagerWidget(QWidget):
         if filename:
             self.key_path_edit.setText(filename)
 
+    def generate_key(self):
+        dialog = SSHKeygenDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            pass  # 用户可自行将公钥部署到服务器
+
+    def _new_folder(self):
+        text, ok = QInputDialog.getText(self, "新建分组", "输入分组名称")
+        if ok and text:
+            self._folders[text] = QTreeWidgetItem(self.site_list, [text])
+            self._folders[text].setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.site_list.expandAll()
+
     def load_sites(self):
-        """加载所有站点到列表"""
         self.site_list.clear()
+        self._folders.clear()
+        root_folder = QTreeWidgetItem(self.site_list, ["📂 未分组"])
+        root_folder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self._folders["未分组"] = root_folder
 
-        # 加载密码登录
         for val in self.userinfo_db.query_all_password():
-            display_text = f"{val[1]} ({val[3]})"  # Host (Username)
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, {"type": "password", "id": val[0]})
-            self.site_list.addItem(item)
+            display_text = f"{val[1]} ({val[3]})"
+            item = QTreeWidgetItem(root_folder, [display_text])
+            item.setData(0, Qt.ItemDataRole.UserRole, {"type": "password", "id": val[0]})
 
-        # 加载私钥登录
         for val in self.userinfo_db.query_all_key():
             display_text = f"[Key] {val[1]} ({val[3]})"
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, {"type": "key", "id": val[0]})
-            self.site_list.addItem(item)
+            item = QTreeWidgetItem(root_folder, [display_text])
+            item.setData(0, Qt.ItemDataRole.UserRole, {"type": "key", "id": val[0]})
+
+        self.site_list.expandAll()
 
     def create_new_site(self):
         self.site_list.clearSelection()
@@ -277,8 +300,10 @@ class SiteManagerWidget(QWidget):
         self.passphrase_edit.clear()
         self.auth_type_combo.setCurrentIndex(0)
 
-    def on_site_selected(self, item: QListWidgetItem):
-        data = item.data(Qt.ItemDataRole.UserRole)
+    def on_site_selected(self, item: QTreeWidgetItem, column: int = 0):
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data or "type" not in data:
+            return
         self.current_item_data = data
 
         if data["type"] == "password":
@@ -351,7 +376,7 @@ class SiteManagerWidget(QWidget):
         self.load_sites()
         QMessageBox.information(self, "成功", "站点已保存。")
 
-    def insert_new_record(self, host, port, username, auth_type):
+    def insert_new_record(self, host: str, port: int, username: str, auth_type: str) -> None:
         if auth_type == "password":
             self.userinfo_db.insert_password(host, port, username, self.password_edit.text())
         else:
@@ -360,7 +385,8 @@ class SiteManagerWidget(QWidget):
     def delete_site(self):
         item = self.site_list.currentItem()
         if not item: return
-        data = item.data(Qt.ItemDataRole.UserRole)
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data or "type" not in data: return
 
         reply = QMessageBox.question(self, "确认", "确定要删除该站点吗？")
         if reply == QMessageBox.StandardButton.Yes:
