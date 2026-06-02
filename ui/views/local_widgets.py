@@ -5,7 +5,7 @@ import shutil
 
 from PySide6.QtCore import Qt, QModelIndex, QDir
 from PySide6.QtWidgets import QTreeView, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, \
-    QAbstractItemView, QFileSystemModel, QMenu, QInputDialog, QMessageBox, QLineEdit
+    QAbstractItemView, QFileSystemModel, QMenu, QInputDialog, QMessageBox
 
 
 class LocalFileTreeView(QTreeView):

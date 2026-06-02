@@ -76,7 +76,6 @@ class Edit(QTextEdit):
         self.highlighter = SimpleHighlighter(self.document())
 
     def keyPressEvent(self, event):
-        from PySide6.QtCore import Qt
         # === 捕获 Ctrl + S 并执行保存逻辑 ===
         if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_S:
             self.save_file_action()

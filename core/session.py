@@ -43,8 +43,6 @@ class SSHSFTPInfo(QThread):
         self.banner_msg = ""
         self.verify_host_key = verify_host_key
         self.startup_commands = startup_commands or []
-        self._reconnect_enabled = True
-        self._reconnect_delay = 1
 
         # 用于在主线程和后台线程间同步连接状态
         self.connect_is_ready = False

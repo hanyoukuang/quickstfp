@@ -39,32 +39,14 @@ class MainWindow(QMainWindow):
         self.dark_mode_action.triggered.connect(self._toggle_dark_mode)
         toolbar.addAction(self.dark_mode_action)
 
-        self.broadcast_action = QAction("📡 广播模式", self)
-        self.broadcast_action.setCheckable(True)
-        self.broadcast_action.triggered.connect(self._toggle_broadcast)
-        toolbar.addAction(self.broadcast_action)
-
         port_fwd_action = QAction("🔗 端口转发", self)
         port_fwd_action.triggered.connect(self._open_port_forward)
         toolbar.addAction(port_fwd_action)
 
         self._dark_mode = False
         self._apply_theme()
-        self._broadcast_enabled = False
 
         self.site_manager = None
-
-    def _toggle_broadcast(self, checked: bool):
-        self._broadcast_enabled = checked
-
-    def _broadcast_input(self, data: str):
-        if not self._broadcast_enabled:
-            return
-        for i in range(self.tab_widget.count()):
-            widget = self.tab_widget.widget(i)
-            if hasattr(widget, 'terminal_panel'):
-                bridge = widget.terminal_panel.ssh_pty_widget.bridge
-                bridge.on_input(data)
 
     def _open_port_forward(self):
         current = self.tab_widget.currentWidget()
