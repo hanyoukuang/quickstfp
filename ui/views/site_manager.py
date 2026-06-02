@@ -3,7 +3,7 @@ import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
-    QFormLayout, QLineEdit, QPushButton, QComboBox, QStackedWidget,
+    QFormLayout, QLineEdit, QPushButton, QComboBox, QCheckBox, QStackedWidget,
     QMessageBox, QFileDialog, QLabel
 )
 
@@ -78,6 +78,9 @@ class SiteManagerWidget(QWidget):
         form_layout.addRow("端口 (Port):", self.port_edit)
         form_layout.addRow("用户名 (User):", self.username_edit)
         form_layout.addRow("认证方式:", self.auth_type_combo)
+        self.verify_host_checkbox = QCheckBox("验证主机密钥 (建议开启，防止MITM攻击)")
+        self.verify_host_checkbox.setChecked(True)
+        form_layout.addRow(self.verify_host_checkbox)
 
         # 认证方式堆叠面板 (密码 / 私钥)
         self.auth_stacked_widget = QStackedWidget()
@@ -137,8 +140,29 @@ class SiteManagerWidget(QWidget):
 
         self.clear_form()
 
+    def closeEvent(self, event):
+        if hasattr(self, 'userinfo_db') and self.userinfo_db:
+            self.userinfo_db.close()
+        super().closeEvent(event)
+
     def export_sites(self):
         """将当前的站点配置导出为 JSON 文件"""
+        # 二次确认：明文密码泄露风险
+        reply = QMessageBox.warning(
+            self, "⚠️ 安全警告",
+            "导出文件将包含明文密码和密钥口令！\n\n"
+            "如果此文件泄露，攻击者可以直接获取你的所有 SSH 凭证。\n\n"
+            "建议：\n"
+            "• 导出后立即将文件保存到安全位置\n"
+            "• 使用完毕后尽快删除导出文件\n"
+            "• 不要通过不安全的渠道分享该文件\n\n"
+            "确定要继续导出吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
         filename, _ = QFileDialog.getSaveFileName(self, "导出站点配置", "sftp_sites.json", "JSON Files (*.json)")
         if not filename:
             return
@@ -169,7 +193,10 @@ class SiteManagerWidget(QWidget):
         try:
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, ensure_ascii=False, indent=4)
-            QMessageBox.information(self, "成功", "站点配置已成功导出！\n(注：导出的 JSON 文件中包含明文密码，请妥善保管)")
+            QMessageBox.information(self, "导出成功",
+                                    "站点配置已成功导出！\n\n"
+                                    "⚠️ 导出的 JSON 文件中包含明文密码，请妥善保管！\n"
+                                    "导出文件路径：" + filename)
         except Exception as e:
             QMessageBox.warning(self, "导出失败", f"导出过程中发生错误：\n{e}")
 
@@ -273,10 +300,24 @@ class SiteManagerWidget(QWidget):
                 self.passphrase_edit.setText(record[5])
                 self.auth_type_combo.setCurrentIndex(1)
 
+    @staticmethod
+    def _parse_port(text: str) -> int:
+        """安全解析端口号，返回整数；无效输入返回 None"""
+        text = text.strip()
+        if not text:
+            return 22
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
     def save_site(self):
         """保存或更新当前站点"""
         host = self.host_edit.text().strip()
-        port = int(self.port_edit.text().strip() or 22)
+        port = self._parse_port(self.port_edit.text())
+        if port is None:
+            QMessageBox.warning(self, "错误", "端口号必须为有效数字！")
+            return
         username = self.username_edit.text().strip()
         auth_type = "password" if self.auth_type_combo.currentIndex() == 0 else "key"
 
@@ -333,7 +374,10 @@ class SiteManagerWidget(QWidget):
     def connect_site(self):
         """发射登录信号，触发主程序的连接逻辑"""
         host = self.host_edit.text().strip()
-        port = int(self.port_edit.text().strip() or 22)
+        port = self._parse_port(self.port_edit.text())
+        if port is None:
+            QMessageBox.warning(self, "警告", "端口号必须为有效数字！")
+            return
         username = self.username_edit.text().strip()
 
         if not host or not username:
@@ -349,7 +393,8 @@ class SiteManagerWidget(QWidget):
                 QMessageBox.warning(self, "警告", "密码不能为空")
                 return
             self.session_requested.emit({
-                "host": host, "port": port, "username": username, "password": password
+                "host": host, "port": port, "username": username, "password": password,
+                "verify_host_key": self.verify_host_checkbox.isChecked()
             })
         else:
             key_path = self.key_path_edit.text()
@@ -358,5 +403,6 @@ class SiteManagerWidget(QWidget):
                 return
             self.session_requested.emit({
                 "host": host, "port": port, "username": username,
-                "client_keys": [key_path], "passphrase": self.passphrase_edit.text()
+                "client_keys": [key_path], "passphrase": self.passphrase_edit.text(),
+                "verify_host_key": self.verify_host_checkbox.isChecked()
             })

@@ -13,12 +13,12 @@ class SFTPTabWidget(QWidget):
     """
 
     def __init__(self, host: str, port: int, username: str, password: str = None, client_keys: list = None,
-                 passphrase: str = None):
+                 passphrase: str = None, verify_host_key: bool = True):
         super().__init__()
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # 启动核心 Session
-        self.info = SSHSFTPInfo(host, port, username, password, client_keys, passphrase)
+        self.info = SSHSFTPInfo(host, port, username, password, client_keys, passphrase, verify_host_key)
         self.info.start()
         self.info.wait_for_connection()
 
@@ -51,6 +51,7 @@ class SFTPTabWidget(QWidget):
 
         # 使用新增加的优雅退出方法清理所有连接和挂起的 Task
         self.user_sftp_widget.remote_file_widget.external_watcher.cleanup_temp_files()
+        self.user_sftp_widget.remote_file_widget.cleanup_icon_dir()
         self.info.close_session()
 
         # 退出 QThread

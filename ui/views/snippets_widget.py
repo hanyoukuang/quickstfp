@@ -1,11 +1,16 @@
 # ui/views/snippets_widget.py
 import json
+import logging
 import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget, \
     QTreeWidgetItem, QMenu, QInputDialog, QMessageBox, QLineEdit, QFormLayout, QDialog, \
     QDialogButtonBox, QComboBox
+
+from core.config import get_data_path
+
+logger = logging.getLogger(__name__)
 
 
 class SnippetDialog(QDialog):
@@ -50,7 +55,7 @@ class QuickSnippetsWidget(QWidget):
     def __init__(self, site_id: str):
         super().__init__()
         self.site_id = site_id
-        self.snippets_file = "quick_snippets_v2.json"
+        self.snippets_file = get_data_path("quick_snippets_v2.json")
         self.data = {
             "global": [],
             "sites": {}
@@ -145,7 +150,7 @@ class QuickSnippetsWidget(QWidget):
                     self.data["global"] = loaded_data.get("global", [])
                     self.data["sites"] = loaded_data.get("sites", {})
             except Exception as e:
-                print(f"解析快捷命令配置失败: {e}")
+                logger.error(f"解析快捷命令配置失败: {e}")
 
         if self.site_id not in self.data["sites"]:
             self.data["sites"][self.site_id] = []

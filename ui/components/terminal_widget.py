@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, Signal, QUrl
@@ -6,6 +7,8 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from core.session import SSHSFTPInfo
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalBridge(QObject):
@@ -36,7 +39,7 @@ class TerminalBridge(QObject):
                 else:
                     break
             except Exception as e:
-                print(f"Terminal read error: {e}")
+                logger.error(f"Terminal read error: {e}")
                 break
 
     @Slot(str)
@@ -49,7 +52,7 @@ class TerminalBridge(QObject):
             self.info.process.stdin.write(data)
             await self.info.process.stdin.drain()
         except Exception as e:
-            print(f"Terminal write error: {e}")
+            logger.error(f"Terminal write error: {e}")
 
     @Slot(int, int)
     def resize(self, cols: int, rows: int):

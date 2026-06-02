@@ -5,6 +5,8 @@ from typing import List, Tuple, Optional
 
 from cryptography.fernet import Fernet
 
+from core.config import get_data_path
+
 
 class CryptoManager:
     """
@@ -12,8 +14,8 @@ class CryptoManager:
     负责在本地生成并维护唯一的对称加密秘钥文件，提供字符串的透明加解密。
     """
 
-    def __init__(self, key_file: str = '.secret.key'):
-        self.key_file = key_file
+    def __init__(self, key_file: str = None):
+        self.key_file = key_file or get_data_path('.secret.key')
         self.key = self._load_or_generate_key()
         self.cipher = Fernet(self.key)
 
@@ -47,12 +49,12 @@ class UserInfoDB:
     并在底层对敏感信息(密码、passphrase)进行透明加解密拦截。
     """
 
-    def __init__(self, db_path: str = 'userinfo.db'):
+    def __init__(self, db_path: str = None):
         """
         初始化数据库连接和加密管理器
-        :param db_path: 数据库文件路径，默认为 'userinfo.db'
+        :param db_path: 数据库文件路径，默认使用 ~/.config/quickstfp/userinfo.db
         """
-        self.db_path = db_path
+        self.db_path = db_path or get_data_path('userinfo.db')
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
         self.crypto = CryptoManager()  # 初始化加密器
@@ -79,8 +81,16 @@ class UserInfoDB:
                 passphrase TEXT
             )
         '''
+        idx_password = '''
+            CREATE INDEX IF NOT EXISTS idx_password_host ON Password(host, port, username)
+        '''
+        idx_key = '''
+            CREATE INDEX IF NOT EXISTS idx_key_host ON Key(host, port, username)
+        '''
         self.cursor.execute(create_table_password)
         self.cursor.execute(create_table_key)
+        self.cursor.execute(idx_password)
+        self.cursor.execute(idx_key)
         self.conn.commit()
 
     # ==========================================
@@ -88,9 +98,12 @@ class UserInfoDB:
     # ==========================================
 
     def query_password(self, host: str, port: int, username: str, password: str) -> List[Tuple]:
-        """查询时，对比所有的解密数据"""
-        return [row for row in self.query_all_password()
-                if row[1] == host and row[2] == port and row[3] == username and row[4] == password]
+        """查询时，优先使用 SQL 过滤 host/port/username，仅对匹配行解密后比较密码"""
+        sql = "SELECT * FROM Password WHERE host = ? AND port = ? AND username = ?"
+        self.cursor.execute(sql, (host, port, username))
+        rows = self.cursor.fetchall()
+        return [(r[0], r[1], r[2], r[3], self.crypto.decrypt(r[4]))
+                for r in rows if self.crypto.decrypt(r[4]) == password]
 
     def insert_password(self, host: str, port: int, username: str, password: str) -> None:
         """
@@ -136,10 +149,12 @@ class UserInfoDB:
     # ==========================================
 
     def query_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> List[Tuple]:
-        """查询秘钥数据"""
-        return [row for row in self.query_all_key()
-                if row[1] == host and row[2] == port and row[3] == username and row[4] == key_path and row[
-                    5] == passphrase]
+        """查询秘钥数据，使用 SQL 过滤 host/port/username/key_path 后仅解密匹配行"""
+        sql = "SELECT * FROM Key WHERE host = ? AND port = ? AND username = ? AND key_path = ?"
+        self.cursor.execute(sql, (host, port, username, key_path))
+        rows = self.cursor.fetchall()
+        return [(r[0], r[1], r[2], r[3], r[4], self.crypto.decrypt(r[5]))
+                for r in rows if self.crypto.decrypt(r[5]) == passphrase]
 
     def insert_key(self, host: str, port: int, username: str, key_path: str, passphrase: str = "") -> None:
         """
@@ -182,8 +197,14 @@ class UserInfoDB:
         """关闭数据库连接"""
         if self.conn:
             self.conn.close()
+            self.conn = None
 
-        # 在 UserInfoDB 类中补充以下两个方法
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def update_password(self, idx: int, host: str, port: int, username: str, password: str) -> None:
         """更新密码登录记录"""
@@ -199,10 +220,3 @@ class UserInfoDB:
         sql = "UPDATE Key SET host=?, port=?, username=?, key_path=?, passphrase=? WHERE id=?"
         self.cursor.execute(sql, (host, port, username, key_path, encrypted_passphrase, idx))
         self.conn.commit()
-
-    def __del__(self):
-        """确保对象销毁时关闭游标和连接"""
-        try:
-            self.close()
-        except Exception:
-            pass

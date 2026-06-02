@@ -1,4 +1,5 @@
 # ui/views/editor_widgets.py
+import logging
 import os
 import re
 import shutil
@@ -12,6 +13,8 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PySide6.QtWidgets import QTextEdit, QMessageBox, QDialog, QVBoxLayout, QGridLayout, QLabel, QCheckBox, \
     QDialogButtonBox
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleHighlighter(QSyntaxHighlighter):
@@ -129,9 +132,9 @@ class ExternalEditorWatcher(QObject):
         if os.path.exists(self.temp_dir):
             try:
                 shutil.rmtree(self.temp_dir)
-                print(f"已清理外部编辑临时目录: {self.temp_dir}")
+                logger.info(f"已清理外部编辑临时目录: {self.temp_dir}")
             except Exception as e:
-                print(f"清理临时目录失败: {e}")
+                logger.error(f"清理临时目录失败: {e}")
 
     def open_in_external_editor(self, remote_path: str, content: str):
         filename = os.path.basename(remote_path)
@@ -165,10 +168,10 @@ class ExternalEditorWatcher(QObject):
 
                 # 触发底层同步回远端
                 self.info.save_file(remote_path, content)
-                print(f"[{os.path.basename(remote_path)}] 外部修改已自动同步到远端！")
+                logger.info(f"[{os.path.basename(remote_path)}] 外部修改已自动同步到远端！")
 
             except Exception as e:
-                print(f"同步远端文件失败: {e}")
+                logger.error(f"同步远端文件失败: {e}")
             finally:
                 # 【核心修复】：许多现代编辑器（如 VSCode, Vim）在保存时是"原子保存"
                 # 即先写入一个新文件，再替换旧文件。这会导致 QFileSystemWatcher 丢失对 inode 的监控。

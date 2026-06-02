@@ -1,3 +1,4 @@
+import logging
 import sys
 
 from PySide6.QtCore import Qt
@@ -116,6 +117,12 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     app = QApplication(sys.argv)
 
     # 全局样式：让界面看起来更紧凑专业 (可选)

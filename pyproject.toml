@@ -1,10 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "quickstfp"
 version = "0.1.0"
-description = "Add your description here"
+description = "跨平台 SFTP/SSH 客户端工具，支持多标签页终端、并发文件传输与站点管理"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "asyncssh>=2.21.1",
+    "cryptography>=41.0.0",
     "pyside6>=6.10.3",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-qt>=4.4",
+    "pytest-mock>=3.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+qt_api = "pyside6"

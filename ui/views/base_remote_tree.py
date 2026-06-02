@@ -1,7 +1,9 @@
 # ui/views/base_remote_tree.py
 import asyncio
 import datetime
+import logging
 import os
+import shutil
 import stat
 import tempfile
 
@@ -10,6 +12,8 @@ from PySide6.QtCore import Qt, QModelIndex, Signal, Slot
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QFileIconProvider
 from PySide6.QtWidgets import QTreeView, QStyle, QApplication, QAbstractItemView
+
+logger = logging.getLogger(__name__)
 
 
 class NumericSortItem(QStandardItem):
@@ -68,6 +72,14 @@ class BaseRemoteTreeWidget(QTreeView):
         self.show_hidden = False
 
         self.init_base_ui()
+
+    def cleanup_icon_dir(self) -> None:
+        """清理图标缓存临时目录，在组件关闭时调用"""
+        if hasattr(self, 'icon_temp_dir') and os.path.exists(self.icon_temp_dir):
+            try:
+                shutil.rmtree(self.icon_temp_dir)
+            except Exception:
+                pass
 
     def init_base_ui(self):
         self.current_folder_loaded_msg.connect(self.add_new_file)
@@ -144,7 +156,7 @@ class BaseRemoteTreeWidget(QTreeView):
             results = await asyncio.gather(*tasks)
             self.current_folder_loaded_msg.emit([r for r in results if r])
         except Exception as e:
-            print(f"搜索远端文件失败: {e}")
+            logger.warning(f"搜索远端文件失败: {e}")
             self.current_folder_loaded_msg.emit([])
 
     async def fetch_current_dir(self, path: str):
@@ -156,7 +168,7 @@ class BaseRemoteTreeWidget(QTreeView):
                     entries.append(entry)
             self.current_folder_loaded_msg.emit(entries)
         except Exception as e:
-            print(f"拉取目录失败: {e}")
+            logger.warning(f"拉取目录失败: {e}")
 
     def on_item_expanded(self, index: QModelIndex):
         name_index = index.siblingAtColumn(0)

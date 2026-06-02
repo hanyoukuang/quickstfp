@@ -1,5 +1,6 @@
 # core/session.py
 import asyncio
+import shlex
 import threading
 from asyncio import AbstractEventLoop
 from typing import Optional, List
@@ -28,7 +29,8 @@ class SSHSFTPInfo(QThread):
             username: str,
             password: Optional[str] = None,
             client_keys: Optional[List[str]] = None,
-            passphrase: Optional[str] = None
+            passphrase: Optional[str] = None,
+            verify_host_key: bool = True,
     ):
         super().__init__()
         self.host = host
@@ -38,59 +40,102 @@ class SSHSFTPInfo(QThread):
         self.client_keys = client_keys
         self.passphrase = passphrase
         self.banner_msg = ""
+        self.verify_host_key = verify_host_key
 
         # 用于在主线程和后台线程间同步连接状态
         self.connect_is_ready = False
         self.connect_error = None
         self.connect_event = threading.Event()
 
-    def wait_for_connection(self):
+    def wait_for_connection(self, timeout: float = 30.0):
         """主线程调用此方法来等待连接完成，期间保持 UI 刷新"""
         event_loop = QEventLoop()
-        timer = QTimer()
+        poll_timer = QTimer()
+        timeout_timer = QTimer()
+        timed_out = False
 
-        # 每 50ms 检查一次后台线程是否连上了
         def check_status():
             if self.connect_event.is_set():
+                poll_timer.stop()
+                if timeout_timer.isActive():
+                    timeout_timer.stop()
                 event_loop.quit()
 
-        timer.timeout.connect(check_status)
-        timer.start(50)
-        event_loop.exec()  # 开启局部事件循环，阻止代码往下走，但允许 UI 刷新
+        def on_timeout():
+            nonlocal timed_out
+            timed_out = True
+            poll_timer.stop()
+            event_loop.quit()
 
-        # 如果连接报错，将异常抛给主线程
+        poll_timer.timeout.connect(check_status)
+        poll_timer.start(50)
+        timeout_timer.setSingleShot(True)
+        timeout_timer.timeout.connect(on_timeout)
+        timeout_timer.start(int(timeout * 1000))
+        event_loop.exec()
+
+        if timed_out:
+            raise TimeoutError(f"连接超时 ({timeout}s)")
+
         if self.connect_error:
             raise self.connect_error
 
-    def _wait_future(self, future):
-        """通用的局部阻塞等待机制：在等待网络请求时保持 GUI 界面存活"""
+    def _wait_future(self, future, timeout: float = None):
         event_loop = QEventLoop()
-        timer = QTimer()
+        poll_timer = QTimer()
+        timeout_timer = QTimer()
+        timed_out = False
 
         def check_status():
             if future.done():
+                poll_timer.stop()
+                if timeout_timer.isActive():
+                    timeout_timer.stop()
                 event_loop.quit()
 
-        timer.timeout.connect(check_status)
-        timer.start(20)  # 20ms 的高频检查
+        def on_timeout():
+            nonlocal timed_out
+            timed_out = True
+            poll_timer.stop()
+            event_loop.quit()
+
+        poll_timer.timeout.connect(check_status)
+        poll_timer.start(20)
+
+        if timeout is not None:
+            timeout_timer.setSingleShot(True)
+            timeout_timer.timeout.connect(on_timeout)
+            timeout_timer.start(int(timeout * 1000))
+
         event_loop.exec()
 
-        # 事件循环退出时，future 必定已完成
+        if timed_out:
+            raise TimeoutError(f"操作超时 ({timeout}s)")
+
         return future.result()
 
     async def get_session(self) -> None:
         """异步建立 SSH 连接、初始化 SFTP 客户端及终端进程"""
 
-        # 【修改】将拦截器通过 client_factory 注入到连接中
-        self.connection = await asyncssh.connect(
-            host=self.host,
-            port=self.port,
-            username=self.username,
-            password=self.password,
-            client_keys=self.client_keys,
-            passphrase=self.passphrase,
-            known_hosts=None,  # TODO: 在生产环境中应使用 known_hosts 验证主机密钥以防范 MITM 攻击
-        )
+        try:
+            self.connection = await asyncssh.connect(
+                host=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                client_keys=self.client_keys,
+                passphrase=self.passphrase,
+                known_hosts=asyncssh.known_hosts.KnownHosts() if self.verify_host_key else None,
+                connect_timeout=10,
+            )
+        except asyncssh.HostKeyNotVerifiable as e:
+            fingerprint = ":".join(f"{b:02x}" for b in e.host_key.fingerprint)
+            raise RuntimeError(
+                f"主机密钥验证失败！\n"
+                f"服务器指纹: {fingerprint}\n"
+                f"请通过终端手动连接一次以信任该主机 (ssh {self.username}@{self.host})，\n"
+                f"或在 ~/.ssh/known_hosts 中添加主机密钥。"
+            ) from e
         self.process = await self.connection.create_process(
             request_pty=True,
             term_type='xterm-256color',
@@ -130,16 +175,16 @@ class SSHSFTPInfo(QThread):
         return self._run_sync(self.sftp.realpath(path))
 
     def del_file(self, path: str) -> None:
-        return self._run_sync(self.connection.run(f"rm -rf {path}\n"))
+        return self._run_sync(self.connection.run(f"rm -rf {shlex.quote(path)}\n"))
 
     def makedirs(self, path: str) -> None:
         return self._run_sync(self.sftp.makedirs(path, exist_ok=True))
 
     def copy_file(self, old_path: str, new_path: str) -> None:
-        return self._run_sync(self.connection.run(f"cp -rf {old_path} {new_path}\n"))
+        return self._run_sync(self.connection.run(f"cp -rf {shlex.quote(old_path)} {shlex.quote(new_path)}\n"))
 
     def move_file(self, old_path: str, new_path: str) -> None:
-        return self._run_sync(self.connection.run(f"mv {old_path} {new_path}\n"))
+        return self._run_sync(self.connection.run(f"mv {shlex.quote(old_path)} {shlex.quote(new_path)}\n"))
 
     def rename(self, old_name: str, new_name: str) -> None:
         return self._run_sync(self.sftp.rename(old_name, new_name))
