@@ -68,12 +68,15 @@ class MainWindow(QMainWindow):
 
     def _open_port_forward(self):
         current = self.tab_widget.currentWidget()
-        if current and hasattr(current, 'info'):
-            dialog = PortForwardDialog(self, session=current.info)
-            dialog.exec()
-
-        # 3. 存放站点管理器的引用，防止被垃圾回收
-        self.site_manager = None
+        if not current or not hasattr(current, 'info'):
+            return
+        if self._port_fwd_dialog is None:
+            self._port_fwd_dialog = PortForwardDialog(self, session=current.info)
+        else:
+            self._port_fwd_dialog._session = current.info
+        self._port_fwd_dialog.show()
+        self._port_fwd_dialog.raise_()
+        self._port_fwd_dialog.activateWindow()
 
     def _toggle_dark_mode(self, checked: bool):
         self._dark_mode = checked
@@ -116,7 +119,9 @@ class MainWindow(QMainWindow):
         # 2. 如果窗口实例存在但不可见（被用户点X关闭了），则彻底清理旧实例
         if self.site_manager is not None:
             self.site_manager.deleteLater()
-            self.site_manager = None
+        self.site_manager = None
+
+        self._port_fwd_dialog = None
 
         # 3. 每次都重新实例化一个全新的站点管理器，确保数据库连接是全新且活跃的
         self.site_manager = SiteManagerWidget()

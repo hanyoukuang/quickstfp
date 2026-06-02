@@ -50,6 +50,8 @@ class SSHSFTPInfo(QThread):
         self.connect_is_ready = False
         self.connect_error = None
         self.connect_event = threading.Event()
+        self._host_key_warning = False
+        self._host_key_fingerprint = ""
 
     def wait_for_connection(self, timeout: float = 30.0):
         """主线程调用此方法来等待连接完成，期间保持 UI 刷新"""
@@ -129,19 +131,15 @@ class SSHSFTPInfo(QThread):
                 password=self.password,
                 client_keys=self.client_keys,
                 passphrase=self.passphrase,
-                known_hosts=asyncssh.known_hosts.KnownHosts() if self.verify_host_key else None,
+                known_hosts=asyncssh.SSHKnownHosts() if self.verify_host_key else None,
                 connect_timeout=10,
                 keepalive_interval=30,
                 keepalive_count_max=3,
             )
         except asyncssh.HostKeyNotVerifiable as e:
-            fingerprint = ":".join(f"{b:02x}" for b in e.host_key.fingerprint)
-            raise RuntimeError(
-                f"主机密钥验证失败！\n"
-                f"服务器指纹: {fingerprint}\n"
-                f"请通过终端手动连接一次以信任该主机 (ssh {self.username}@{self.host})，\n"
-                f"或在 ~/.ssh/known_hosts 中添加主机密钥。"
-            ) from e
+            self._host_key_warning = True
+            self._host_key_fingerprint = str(e)
+            return
         self.process = await self.connection.create_process(
             request_pty=True,
             term_type='xterm-256color',
@@ -165,9 +163,9 @@ class SSHSFTPInfo(QThread):
             await self.connection.forward_local_port(listen_host, listen_port, remote_host, remote_port)
         self._run_sync(_fwd())
 
-    def forward_remote_port(self, listen_host: str, listen_port: int, remote_host: str, remote_port: int):
+    def forward_remote_port(self, listen_host: str, listen_port: int, local_host: str, local_port: int):
         async def _fwd():
-            await self.connection.forward_remote_port(listen_host, listen_port, remote_host, remote_port)
+            await self.connection.forward_remote_port(listen_host, listen_port, local_host, local_port)
         self._run_sync(_fwd())
 
     def is_file(self, path: str) -> bool:
@@ -229,7 +227,8 @@ class SSHSFTPInfo(QThread):
         asyncio.set_event_loop(self.loop)
         try:
             self.loop.run_until_complete(self.get_session())
-            self.connect_is_ready = True
+            if not self._host_key_warning:
+                self.connect_is_ready = True
         except Exception as e:
             self.connect_error = e
         finally:

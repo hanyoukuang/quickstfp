@@ -1,6 +1,6 @@
 # ui/views/sftp_tab_widget.py
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QStackedWidget
+from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QStackedWidget, QMessageBox
 
 from core.session import SSHSFTPInfo
 from ui.views.user_widgets import ControlWidget, UserSFTPWidget, TerminalPanel
@@ -17,9 +17,15 @@ class SFTPTabWidget(QWidget):
         super().__init__()
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.info = SSHSFTPInfo(host, port, username, password, client_keys, passphrase, verify_host_key)
-        self.info.start()
-        self.info.wait_for_connection()
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
+        self._client_keys = client_keys
+        self._passphrase = passphrase
+        self._verify_host_key = verify_host_key
+
+        self._init_session()
 
         self.control_widget = ControlWidget(self)
         self.transport_control_widget = TransportControlWidget(self)
@@ -34,6 +40,44 @@ class SFTPTabWidget(QWidget):
         self._health_timer.timeout.connect(self._check_health)
         self._health_timer.start(30000)
         self._health_status = True
+
+    def _init_session(self):
+        self.info = SSHSFTPInfo(
+            self._host, self._port, self._username,
+            self._password, self._client_keys, self._passphrase,
+            self._verify_host_key,
+        )
+        self.info.start()
+        self.info.wait_for_connection()
+
+        while self.info._host_key_warning:
+            fp = self.info._host_key_fingerprint or "(无法读取)"
+            reply = QMessageBox.question(
+                self, "主机密钥验证失败",
+                f"服务器 {self._host}:{self._port} 的主机密钥不在 ~/.ssh/known_hosts 中。\n\n"
+                f"指纹: {fp}\n\n"
+                f"可能是首次连接该服务器，或者服务器密钥已变更。\n"
+                f"是否跳过验证，直接登录？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.info.quit()
+                self.info.wait(3000)
+                self._verify_host_key = False
+                self.info = SSHSFTPInfo(
+                    self._host, self._port, self._username,
+                    self._password, self._client_keys, self._passphrase,
+                    verify_host_key=False,
+                )
+                self.info.start()
+                self.info.wait_for_connection()
+            else:
+                raise RuntimeError(
+                    f"主机密钥验证失败！\n"
+                    f"服务器指纹: {fp}\n"
+                    f"请通过终端手动连接以信任该主机 (ssh {self._username}@{self._host})。"
+                )
 
     def _check_health(self):
         try:
