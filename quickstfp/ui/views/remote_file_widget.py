@@ -7,14 +7,14 @@ from PySide6.QtCore import Qt, QModelIndex, QTimer
 from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import QMessageBox, QInputDialog, QLineEdit, QMenu, QDialog, QAbstractItemView
 
-from core.session import SSHSFTPInfo
-from core.transport import GET, PUT
-from ui.components.progress_bar import ProgressBar
-from ui.views.editor_widgets import Edit, ExternalEditorWatcher, PermissionDialog
-from ui.views.base_remote_tree import BaseRemoteTreeWidget, NumericSortItem
-from ui.views.remote_drag_drop import RemoteDragDropMixin
-from ui.views.batch_rename_dialog import BatchRenameDialog
-from utils.file_utils import is_binary
+from quickstfp.core.session import SSHSFTPInfo
+from quickstfp.core.transport import GET, PUT
+from quickstfp.ui.components.progress_bar import ProgressBar
+from quickstfp.ui.views.editor_widgets import Edit, ExternalEditorWatcher, PermissionDialog
+from quickstfp.ui.views.base_remote_tree import BaseRemoteTreeWidget, NumericSortItem
+from quickstfp.ui.views.remote_drag_drop import RemoteDragDropMixin
+from quickstfp.ui.views.batch_rename_dialog import BatchRenameDialog
+from quickstfp.utils.file_utils import is_binary
 
 logger = logging.getLogger(__name__)
 

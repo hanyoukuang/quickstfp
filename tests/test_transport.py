@@ -1,7 +1,7 @@
 """Transport 模块单元测试"""
 import pytest
-from core.transport import SpeedLimiter, ImmediateSchedulerPool, ProgressTracker, Transport, GET, PUT
-from utils.file_utils import path_stand, is_binary
+from quickstfp.core.transport import SpeedLimiter, ImmediateSchedulerPool, ProgressTracker, Transport, GET, PUT
+from quickstfp.utils.file_utils import path_stand, is_binary
 
 
 class TestPathStand:

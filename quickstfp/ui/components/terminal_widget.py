@@ -18,9 +18,9 @@ from PySide6.QtCore import QObject, Slot, Signal, Qt, QTimer, QEvent
 from PySide6.QtGui import QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import QApplication
 
-from core.session import SSHSFTPInfo
-from ui.terminal.widget import TerminalWidget
-from ui.terminal.input_handler import InputHandler
+from quickstfp.core.session import SSHSFTPInfo
+from quickstfp.ui.terminal.widget import TerminalWidget
+from quickstfp.ui.terminal.input_handler import InputHandler
 
 logger = logging.getLogger(__name__)
 

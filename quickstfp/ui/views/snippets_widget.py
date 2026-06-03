@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
     QTreeWidgetItem, QMenu, QInputDialog, QMessageBox, QLineEdit, QFormLayout, QDialog, \
     QDialogButtonBox, QComboBox
 
-from core.config import get_data_path
+from quickstfp.core.config import get_data_path
 
 logger = logging.getLogger(__name__)
 

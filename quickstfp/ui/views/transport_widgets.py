@@ -6,9 +6,9 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QL
     QListWidget, QListWidgetItem, QStyle, QApplication, QSlider, QSpinBox, QFormLayout, QFileDialog, \
     QMessageBox
 
-from core.transport import GET, PUT
-from ui.components.progress_bar import ProgressBar
-from ui.views.base_remote_tree import BaseRemoteTreeWidget
+from quickstfp.core.transport import GET, PUT
+from quickstfp.ui.components.progress_bar import ProgressBar
+from quickstfp.ui.views.base_remote_tree import BaseRemoteTreeWidget
 
 
 class TransportTargetWidget(BaseRemoteTreeWidget):

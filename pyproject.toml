@@ -16,6 +16,9 @@ dependencies = [
     "pyside6>=6.11.1",
 ]
 
+[project.scripts]
+quickstfp = "quickstfp.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -23,6 +26,9 @@ dev = [
     "pytest-qt>=4.4",
     "pytest-mock>=3.12",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["quickstfp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

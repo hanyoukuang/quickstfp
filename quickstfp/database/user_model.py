@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 
 from cryptography.fernet import Fernet
 
-from core.config import get_data_path
+from quickstfp.core.config import get_data_path
 
 
 class CryptoManager:

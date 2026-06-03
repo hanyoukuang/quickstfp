@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QLabel, QInputDialog
 )
 
-from database.user_model import UserInfoDB
-from ui.views.ssh_keygen_dialog import SSHKeygenDialog
+from quickstfp.database.user_model import UserInfoDB
+from quickstfp.ui.views.ssh_keygen_dialog import SSHKeygenDialog
 
 
 class SiteManagerWidget(QWidget):

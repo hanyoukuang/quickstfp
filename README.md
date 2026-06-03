@@ -12,14 +12,14 @@
 git clone https://github.com/hanyoukuang/quickstfp.git
 cd quickstfp
 uv sync
-python main.py
 ```
 
-或手动安装依赖：
+## 运行
 
 ```bash
-pip install "asyncssh>=2.21" "par-term-emu-core-rust>=0.42" "pyside6>=6.11"
-python main.py
+uv run python main.py
+# 或安装后直接使用命令
+uv run quickstfp
 ```
 
 ## 安全注意事项
