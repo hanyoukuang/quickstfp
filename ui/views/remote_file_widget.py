@@ -56,9 +56,9 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
         makedir_action = context_menu.addAction("新建文件夹")
         new_file_action = context_menu.addAction("新文件")
         refresh_action = context_menu.addAction("刷新")
-        makedir_action.triggered.connect(self.makedir)
-        new_file_action.triggered.connect(self.new_file)
-        refresh_action.triggered.connect(self.refresh)
+        makedir_action.triggered.connect(lambda: QTimer.singleShot(0, self.makedir))
+        new_file_action.triggered.connect(lambda: QTimer.singleShot(0, self.new_file))
+        refresh_action.triggered.connect(lambda: QTimer.singleShot(0, self.refresh))
 
         if item:
             edit_action = context_menu.addAction("内置编辑器打开")
@@ -68,35 +68,31 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
             copy_action = context_menu.addAction("复制")
             download_action = context_menu.addAction("下载")
 
-            edit_action.triggered.connect(lambda: self.double_item(index))
-            ext_edit_action.triggered.connect(lambda: self.open_external(index))
+            edit_action.triggered.connect(lambda idx=index: QTimer.singleShot(0, lambda: self.double_item(idx)))
+            ext_edit_action.triggered.connect(lambda idx=index: QTimer.singleShot(0, lambda: self.open_external(idx)))
             del_action.triggered.connect(lambda: QTimer.singleShot(0, self.del_items))
             move_action.triggered.connect(self.move_items)
             copy_action.triggered.connect(self.copy_items)
             download_action.triggered.connect(self.download_items)
 
-        def trigger_put(*args):
-            self.put_items(item)
-
-        def trigger_paste(*args):
-            self.paste_items(item)
-
         if self.move_paths:
-            context_menu.addAction("放置").triggered.connect(trigger_put)
+            context_menu.addAction("放置").triggered.connect(
+                lambda it=item: QTimer.singleShot(0, lambda: self.put_items(it)))
         if self.copy_paths:
-            context_menu.addAction("粘贴").triggered.connect(trigger_paste)
+            context_menu.addAction("粘贴").triggered.connect(
+                lambda it=item: QTimer.singleShot(0, lambda: self.paste_items(it)))
 
         if len(self.selectedItems()) == 1 and item:
             rename_action = context_menu.addAction("重命名")
-            rename_action.triggered.connect(lambda: self.rename(item))
+            rename_action.triggered.connect(lambda it=item: QTimer.singleShot(0, lambda: self.rename(it)))
 
             chmod_action = context_menu.addAction("属性/权限")
-            chmod_action.triggered.connect(lambda: self.change_permissions(item))
+            chmod_action.triggered.connect(lambda it=item: QTimer.singleShot(0, lambda: self.change_permissions(it)))
 
         selected = self.selectedItems()
         if len(selected) > 1:
             batch_rename_action = context_menu.addAction("批量重命名")
-            batch_rename_action.triggered.connect(self._batch_rename)
+            batch_rename_action.triggered.connect(lambda: QTimer.singleShot(0, self._batch_rename))
 
         context_menu.exec(self.mapToGlobal(pos))
 
