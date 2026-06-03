@@ -48,53 +48,51 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
+    # ── Context menu helpers ────────────────────────────────────────────
+
+    @staticmethod
+    def _defer(fn, *args):
+        """Schedule fn(*args) to run after the context menu is fully dismissed.
+
+        QMenu.exec() is a blocking call — actions that show modal dialogs or
+        modify the model must be deferred so the menu closes first.
+        """
+        return lambda: QTimer.singleShot(0, lambda: fn(*args))
+
     def show_context_menu(self, pos):
         index = self.indexAt(pos)
         item = self.model.itemFromIndex(index) if index.isValid() else None
+        menu = QMenu(self)
 
-        context_menu = QMenu(self)
-        makedir_action = context_menu.addAction("新建文件夹")
-        new_file_action = context_menu.addAction("新文件")
-        refresh_action = context_menu.addAction("刷新")
-        makedir_action.triggered.connect(lambda: QTimer.singleShot(0, self.makedir))
-        new_file_action.triggered.connect(lambda: QTimer.singleShot(0, self.new_file))
-        refresh_action.triggered.connect(lambda: QTimer.singleShot(0, self.refresh))
+        # ── 通用操作 ──
+        menu.addAction("新建文件夹").triggered.connect(self._defer(self.makedir))
+        menu.addAction("新文件").triggered.connect(self._defer(self.new_file))
+        menu.addAction("刷新").triggered.connect(self._defer(self.refresh))
 
+        # ── 文件/文件夹操作（右键命中具体条目时）──
         if item:
-            edit_action = context_menu.addAction("内置编辑器打开")
-            ext_edit_action = context_menu.addAction("外部程序编辑")
-            del_action = context_menu.addAction("删除")
-            move_action = context_menu.addAction("移动")
-            copy_action = context_menu.addAction("复制")
-            download_action = context_menu.addAction("下载")
+            menu.addAction("内置编辑器打开").triggered.connect(self._defer(self.double_item, index))
+            menu.addAction("外部程序编辑").triggered.connect(self._defer(self.open_external, index))
+            menu.addAction("删除").triggered.connect(self._defer(self.del_items))
+            menu.addAction("移动").triggered.connect(self.move_items)
+            menu.addAction("复制").triggered.connect(self.copy_items)
+            menu.addAction("下载").triggered.connect(self.download_items)
 
-            edit_action.triggered.connect(lambda idx=index: QTimer.singleShot(0, lambda: self.double_item(idx)))
-            ext_edit_action.triggered.connect(lambda idx=index: QTimer.singleShot(0, lambda: self.open_external(idx)))
-            del_action.triggered.connect(lambda: QTimer.singleShot(0, self.del_items))
-            move_action.triggered.connect(self.move_items)
-            copy_action.triggered.connect(self.copy_items)
-            download_action.triggered.connect(self.download_items)
-
+        # ── 拖放操作 ──
         if self.move_paths:
-            context_menu.addAction("放置").triggered.connect(
-                lambda it=item: QTimer.singleShot(0, lambda: self.put_items(it)))
+            menu.addAction("放置").triggered.connect(self._defer(self.put_items, item))
         if self.copy_paths:
-            context_menu.addAction("粘贴").triggered.connect(
-                lambda it=item: QTimer.singleShot(0, lambda: self.paste_items(it)))
+            menu.addAction("粘贴").triggered.connect(self._defer(self.paste_items, item))
 
-        if len(self.selectedItems()) == 1 and item:
-            rename_action = context_menu.addAction("重命名")
-            rename_action.triggered.connect(lambda it=item: QTimer.singleShot(0, lambda: self.rename(it)))
-
-            chmod_action = context_menu.addAction("属性/权限")
-            chmod_action.triggered.connect(lambda it=item: QTimer.singleShot(0, lambda: self.change_permissions(it)))
-
+        # ── 单项 / 批量操作 ──
         selected = self.selectedItems()
-        if len(selected) > 1:
-            batch_rename_action = context_menu.addAction("批量重命名")
-            batch_rename_action.triggered.connect(lambda: QTimer.singleShot(0, self._batch_rename))
+        if len(selected) == 1 and item:
+            menu.addAction("重命名").triggered.connect(self._defer(self.rename, item))
+            menu.addAction("属性/权限").triggered.connect(self._defer(self.change_permissions, item))
+        elif len(selected) > 1:
+            menu.addAction("批量重命名").triggered.connect(self._defer(self._batch_rename))
 
-        context_menu.exec(self.mapToGlobal(pos))
+        menu.exec(self.mapToGlobal(pos))
 
     def open_external(self, index: QModelIndex):
         if index.column() != 0:
