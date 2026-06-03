@@ -551,8 +551,14 @@ class TerminalWidget(QWidget):
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         delta = event.angleDelta().y()
-        sb_len = self._term.scrollback_len()
-        if sb_len == 0:
+
+        # Forward mouse wheel to PTY when mouse tracking is active (interactive only)
+        if not self._display_only and self._term.mouse_mode() != "off":
+            self._send_mouse_wheel(event, delta)
+            return
+
+        max_scroll = max(self._term.scrollback_len(), self._rows * 100)
+        if max_scroll == 0:
             return
 
         self._wheel_accum += delta
@@ -562,9 +568,21 @@ class TerminalWidget(QWidget):
             return
         self._wheel_accum %= threshold
 
-        self._scroll_offset = max(0, min(sb_len,
+        self._scroll_offset = max(0, min(max_scroll,
                                   self._scroll_offset - lines))
         self.update()
+
+    def _send_mouse_wheel(self, event: QWheelEvent, delta: int) -> None:
+        """Send mouse wheel events to PTY using SGR mouse protocol."""
+        col = int(event.position().x() // self._cell_w)
+        row = int(event.position().y() // self._cell_h)
+        button = 64 if delta > 0 else 65
+        col = min(col, 222)
+        row = min(row, 222)
+        lines = abs(int(delta // self._cell_h))
+        for _ in range(max(lines, 1)):
+            seq = b"\x1b[M" + bytes([button + 32]) + bytes([col + 32]) + bytes([row + 32])
+            self._term.write(seq)
 
     # ── Keyboard ─────────────────────────────────────────────────────────
 
@@ -583,8 +601,8 @@ class TerminalWidget(QWidget):
             self._change_font_size(13 - self._font.pointSize())
             return
         if key == Qt.Key_PageUp and mods & Qt.ShiftModifier:
-            sb_len = self._term.scrollback_len()
-            self._scroll_offset = min(sb_len,
+            max_scroll = max(self._term.scrollback_len(), self._rows * 100)
+            self._scroll_offset = min(max_scroll,
                                       self._scroll_offset + self._rows // 2)
             self.update()
             return
