@@ -1,15 +1,25 @@
 # quickstfp
 
-此工具配备 SSH 伪终端、SFTP 界面。它封装了 asyncssh 的部分函数，可以并发地传输文件（夹）。GUI 部分使用 PySide6 显示。小巧、跨平台性能好，支持 Windows, Mac, Linux 主流操作系统。
+跨平台 SFTP/SSH 客户端工具。支持多标签页终端、并发文件传输与站点管理。
 
-## 使用指南
+终端渲染基于 [kai-term](https://github.com/hanyoukuang/kai-term)，使用原生 QPainter + Rust VT520 解析器（[par-term-emu-core-rust](https://github.com/paulrobello/par-term-emu-core-rust)），无 Web 依赖。
 
-1. 首先需要安装一个 Python 解释器
-2. 打开终端输入
+## 安装
+
+需要 Python **3.12+** 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-pip install asyncssh pyside6
-python3 main.py
+git clone https://github.com/hanyoukuang/quickstfp.git
+cd quickstfp
+uv sync
+python main.py
+```
+
+或手动安装依赖：
+
+```bash
+pip install "asyncssh>=2.21" "par-term-emu-core-rust>=0.42" "pyside6>=6.11"
+python main.py
 ```
 
 ## 安全注意事项
