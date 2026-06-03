@@ -34,7 +34,7 @@ class BatchRenameDialog(QDialog):
         form.addRow("替换:", self._replace_edit)
         layout.addLayout(form)
 
-        preview_btn = QPushButton("预览")
+        preview_btn = QPushButton("👁️ 预览")
         preview_btn.clicked.connect(self._do_preview)
         layout.addWidget(preview_btn)
 

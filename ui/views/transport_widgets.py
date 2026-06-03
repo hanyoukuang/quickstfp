@@ -126,7 +126,7 @@ class TransferSetupWidget(QWidget):
         self.dst_btn = QPushButton()
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("排除模式: *.pyc;__pycache__;.git  (分号分隔)")
-        self.transport_btn = QPushButton("开始传输")
+        self.transport_btn = QPushButton("▶️ 开始传输")
 
         self.init_ui()
         self.setup_mode()
@@ -154,14 +154,14 @@ class TransferSetupWidget(QWidget):
         """根据是上传还是下载，动态配置按钮文字和事件"""
         if self.mode == "GET":
             self.src_dir_btn.setHidden(True)
-            self.src_btn.setText("选择远端文件")
-            self.dst_btn.setText("选择本地存储位置")
+            self.src_btn.setText("📂 选择远端文件")
+            self.dst_btn.setText("💻 选择本地存储位置")
 
             self.src_btn.clicked.connect(self.select_remote_file_widget.show)
             self.dst_btn.clicked.connect(self.get_local_dir)
         else:
-            self.src_btn.setText("选择本地文件")
-            self.dst_btn.setText("选择远端存储的位置")
+            self.src_btn.setText("💻 选择本地文件")
+            self.dst_btn.setText("📂 选择远端存储的位置")
 
             self.src_btn.clicked.connect(self.get_local_file)
             self.src_dir_btn.clicked.connect(self.get_local_dir_for_src)

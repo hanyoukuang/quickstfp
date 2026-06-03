@@ -471,30 +471,30 @@ class TerminalWidget(QWidget):
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
 
-        copy_action = QAction("Copy", menu)
+        copy_action = QAction("📋 复制", menu)
         copy_action.setShortcut("Ctrl+Shift+C")
         copy_action.triggered.connect(self._copy_selection)
         copy_action.setEnabled(bool(self._sel_start))
         menu.addAction(copy_action)
 
-        paste_action = QAction("Paste", menu)
+        paste_action = QAction("📋 粘贴", menu)
         paste_action.setShortcut("Ctrl+Shift+V")
         paste_action.triggered.connect(self._paste_to_ssh)
         menu.addAction(paste_action)
 
         menu.addSeparator()
 
-        zoom_in = QAction("Zoom In", menu)
+        zoom_in = QAction("🔍 放大", menu)
         zoom_in.setShortcut("Ctrl++")
         zoom_in.triggered.connect(lambda: self._change_font_size(1))
         menu.addAction(zoom_in)
 
-        zoom_out = QAction("Zoom Out", menu)
+        zoom_out = QAction("🔎 缩小", menu)
         zoom_out.setShortcut("Ctrl+-")
         zoom_out.triggered.connect(lambda: self._change_font_size(-1))
         menu.addAction(zoom_out)
 
-        zoom_reset = QAction("Reset Zoom", menu)
+        zoom_reset = QAction("↩️ 重置缩放", menu)
         zoom_reset.setShortcut("Ctrl+0")
         zoom_reset.triggered.connect(lambda: self._change_font_size(
             13 - self._font.pointSize()))

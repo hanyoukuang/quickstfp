@@ -85,7 +85,7 @@ class LocalFileWidget(QWidget):
         # 3. 顶部路径与控制栏
         self.path_edit = QLineEdit(QDir.homePath())
         self.path_edit.setReadOnly(True)
-        self.up_button = QPushButton("返回上级")
+        self.up_button = QPushButton("⬆️ 返回上级")
 
         # --- 新增：剪贴板变量 ---
         self.copy_paths = []
@@ -131,30 +131,30 @@ class LocalFileWidget(QWidget):
         index = self.tree.indexAt(pos)
         menu = QMenu(self)
 
-        new_folder_action = menu.addAction("新建文件夹")
+        new_folder_action = menu.addAction("📁 新建文件夹")
         new_folder_action.triggered.connect(lambda *args: self.new_folder(index))
 
-        new_file_action = menu.addAction("新建文件")
+        new_file_action = menu.addAction("📄 新建文件")
         new_file_action.triggered.connect(lambda *args: self.new_file(index))
 
         if index.isValid():
             menu.addSeparator()
-            rename_action = menu.addAction("重命名")
+            rename_action = menu.addAction("✏️ 重命名")
             rename_action.triggered.connect(lambda *args: self.rename(index))
 
-            del_action = menu.addAction("删除")
+            del_action = menu.addAction("🗑️ 删除")
             del_action.triggered.connect(lambda *args: self.delete_items())
 
             menu.addSeparator()
-            copy_action = menu.addAction("复制")
+            copy_action = menu.addAction("📋 复制")
             copy_action.triggered.connect(lambda *args: self.copy_items())
 
-            move_action = menu.addAction("移动")
+            move_action = menu.addAction("📦 移动")
             move_action.triggered.connect(lambda *args: self.move_items())
 
         if self.copy_paths or self.move_paths:
             menu.addSeparator()
-            paste_action = menu.addAction("粘贴")
+            paste_action = menu.addAction("📋 粘贴")
             paste_action.triggered.connect(lambda *args: self.paste_items(index))
 
         menu.exec(self.tree.mapToGlobal(pos))

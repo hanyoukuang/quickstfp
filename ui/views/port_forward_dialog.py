@@ -50,9 +50,9 @@ class PortForwardDialog(QDialog):
         layout.addLayout(form)
 
         btn_layout = QHBoxLayout()
-        add_btn = QPushButton("添加隧道")
+        add_btn = QPushButton("🔀 添加隧道")
         add_btn.clicked.connect(self._add_tunnel)
-        del_btn = QPushButton("删除选中")
+        del_btn = QPushButton("🗑️ 删除选中")
         del_btn.clicked.connect(self._del_tunnel)
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(del_btn)

@@ -33,12 +33,12 @@ class ProgressBar(QWidget):
         self.speed_label.setFixedWidth(80)
 
         self.is_paused = False
-        self.pause_button = QPushButton("Pause")
-        self.retry_button = QPushButton("重试")
+        self.pause_button = QPushButton("⏸️ 暂停")
+        self.retry_button = QPushButton("🔄 重试")
         self.retry_button.hide()
         self._is_failed = False
 
-        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button = QPushButton("⏹️ 取消")
 
         # 初始化UI和绑定信号必须放在所有组件实例化之后
         self.init_ui()
@@ -107,5 +107,5 @@ class ProgressBar(QWidget):
         """处理UI样式变化，并对外抛出信号"""
         self.is_paused = not self.is_paused
         # 切换按钮文字
-        self.pause_button.setText("Resume" if self.is_paused else "Pause")
+        self.pause_button.setText("▶️ 继续" if self.is_paused else "⏸️ 暂停")
         self.pause_requested.emit()
