@@ -1,5 +1,7 @@
 """Encode QKeyEvent into terminal input bytes."""
 
+import sys
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 
@@ -68,12 +70,16 @@ class InputHandler:
             return None
 
         # --- Ctrl+key → C0 control codes (0x00-0x1F) ---
-        if modifiers & Qt.ControlModifier:
+        if sys.platform == "darwin":
+            ctrl_pressed = bool(modifiers & Qt.MetaModifier)
+        else:
+            ctrl_pressed = bool(modifiers & Qt.ControlModifier)
+
+        if ctrl_pressed:
             if text:
-                # macOS / Qt already delivers the control character
-                # e.g. Ctrl+A → '\x01', Ctrl+C → '\x03'
                 return text.encode("utf-8")
-            # Ctrl+special-key: fall through to key sequence
+            if Qt.Key_A <= key <= Qt.Key_Z:
+                return bytes([key - Qt.Key_A + 1])
             seq = cls._KEY_SEQUENCES.get(key)
             if seq:
                 return seq
