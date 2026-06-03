@@ -2,7 +2,7 @@
 import os
 import tempfile
 
-from PySide6.QtCore import Qt, QModelIndex
+from PySide6.QtCore import Qt, QModelIndex, QTimer
 from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import QMessageBox, QInputDialog, QLineEdit, QMenu, QDialog, QAbstractItemView
 
@@ -70,7 +70,7 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
 
             edit_action.triggered.connect(lambda: self.double_item(index))
             ext_edit_action.triggered.connect(lambda: self.open_external(index))
-            del_action.triggered.connect(self.del_items)
+            del_action.triggered.connect(lambda: QTimer.singleShot(0, self.del_items))
             move_action.triggered.connect(self.move_items)
             copy_action.triggered.connect(self.copy_items)
             download_action.triggered.connect(self.download_items)
