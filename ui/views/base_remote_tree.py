@@ -134,7 +134,8 @@ class BaseRemoteTreeWidget(QTreeView):
                             self.filename, self.attrs = name, a
 
                     return SearchEntry(clean_name, attrs)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Search entry stat failed for {clean_name}: {e}")
                     return None
 
             tasks = [get_entry(line) for line in lines]
@@ -172,7 +173,8 @@ class BaseRemoteTreeWidget(QTreeView):
                     if not self.show_hidden and entry.filename.startswith("."): continue
                     entries.append(entry)
             self.sub_folder_loaded_msg.emit(parent_index, entries)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Sub-dir fetch failed: {e}")
             self.sub_folder_loaded_msg.emit(parent_index, [])
 
     @Slot(QModelIndex, list)

@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+from fnmatch import fnmatch
 from typing import List, Tuple, Coroutine, Optional, Set
 
 import asyncssh
@@ -156,7 +157,7 @@ class ProgressTracker:
             self.transport.progress_updated.emit(self.transport._total_progress_size)
         self.last_size = now_size
 
-        now_time = time.time()
+        now_time = time.monotonic()
         time_delta = now_time - self.transport._last_time
         if time_delta >= 0.5:
             async with self.transport._state_lock:
@@ -213,7 +214,7 @@ class Transport(QObject):
 
         self.transport_fail_filename = ""
         self._total_progress_size = 0
-        self._last_time = time.time()
+        self._last_time = time.monotonic()
         self._last_speed_size = 0
         self.pause_event = None
         self._state_lock = asyncio.Lock()
@@ -271,8 +272,8 @@ class Transport(QObject):
             if self.pool:
                 # 仅通知后台事件循环取消任务，绝不能使用 future.result() 阻塞 UI 线程
                 asyncio.run_coroutine_threadsafe(self.pool.cancel(), self.loop)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Cancel pool error (non-critical): {e}")
         self.transport_cancelled.emit()
         self.is_cancel = True
 
@@ -300,7 +301,6 @@ class Transport(QObject):
         patterns = self.filter_patterns.strip()
         if not patterns:
             return False
-        from fnmatch import fnmatch
         for p in patterns.split(";"):
             p = p.strip()
             if p and (fnmatch(filename, p) or p in filename):
@@ -424,7 +424,7 @@ class PUT(Transport):
                             break
                         await remote_file.write(chunk)
                         now_size += len(chunk)
-                        tracker(b'', b'', now_size, local_size)
+                        await tracker(b'', b'', now_size, local_size)
 
         except asyncio.CancelledError:
             # 用户主动取消，静默退出

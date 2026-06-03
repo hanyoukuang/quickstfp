@@ -89,7 +89,8 @@ class QuickSnippetsWidget(QWidget):
             try:
                 with open(self._history_file, 'r', encoding='utf-8') as f:
                     self._history = json.load(f)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to load snippet history: {e}")
                 self._history = []
 
     def _save_history(self):
@@ -117,9 +118,9 @@ class QuickSnippetsWidget(QWidget):
 
         # 底部按钮区
         btn_layout = QHBoxLayout()
-        self.add_btn = QPushButton("添加")
-        self.edit_btn = QPushButton("编辑")
-        self.del_btn = QPushButton("删除")
+        self.add_btn = QPushButton("➕ 添加")
+        self.edit_btn = QPushButton("✏️ 编辑")
+        self.del_btn = QPushButton("🗑️ 删除")
 
         self.add_btn.clicked.connect(self.add_snippet)
         self.edit_btn.clicked.connect(self.edit_snippet)

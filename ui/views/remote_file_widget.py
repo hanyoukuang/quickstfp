@@ -1,4 +1,5 @@
 # ui/views/remote_file_widget.py
+import logging
 import os
 import tempfile
 
@@ -14,6 +15,8 @@ from ui.views.base_remote_tree import BaseRemoteTreeWidget, NumericSortItem
 from ui.views.remote_drag_drop import RemoteDragDropMixin
 from ui.views.batch_rename_dialog import BatchRenameDialog
 from utils.file_utils import is_binary
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
@@ -65,32 +68,32 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
         menu = QMenu(self)
 
         # ── 通用操作 ──
-        menu.addAction("新建文件夹").triggered.connect(self._defer(self.makedir))
-        menu.addAction("新文件").triggered.connect(self._defer(self.new_file))
-        menu.addAction("刷新").triggered.connect(self._defer(self.refresh))
+        menu.addAction("📁 新建文件夹").triggered.connect(self._defer(self.makedir))
+        menu.addAction("📄 新文件").triggered.connect(self._defer(self.new_file))
+        menu.addAction("🔄 刷新").triggered.connect(self._defer(self.refresh))
 
         # ── 文件/文件夹操作（右键命中具体条目时）──
         if item:
-            menu.addAction("内置编辑器打开").triggered.connect(self._defer(self.double_item, index))
-            menu.addAction("外部程序编辑").triggered.connect(self._defer(self.open_external, index))
-            menu.addAction("删除").triggered.connect(self._defer(self.del_items))
-            menu.addAction("移动").triggered.connect(self.move_items)
-            menu.addAction("复制").triggered.connect(self.copy_items)
-            menu.addAction("下载").triggered.connect(self.download_items)
+            menu.addAction("📝 内置编辑器打开").triggered.connect(self._defer(self.double_item, index))
+            menu.addAction("🖊️ 外部程序编辑").triggered.connect(self._defer(self.open_external, index))
+            menu.addAction("🗑️ 删除").triggered.connect(self._defer(self.del_items))
+            menu.addAction("📦 移动").triggered.connect(self.move_items)
+            menu.addAction("📋 复制").triggered.connect(self.copy_items)
+            menu.addAction("⬇️ 下载").triggered.connect(self.download_items)
 
         # ── 拖放操作 ──
         if self.move_paths:
-            menu.addAction("放置").triggered.connect(self._defer(self.put_items, item))
+            menu.addAction("📥 放置").triggered.connect(self._defer(self.put_items, item))
         if self.copy_paths:
-            menu.addAction("粘贴").triggered.connect(self._defer(self.paste_items, item))
+            menu.addAction("📋 粘贴").triggered.connect(self._defer(self.paste_items, item))
 
         # ── 单项 / 批量操作 ──
         selected = self.selectedItems()
         if len(selected) == 1 and item:
-            menu.addAction("重命名").triggered.connect(self._defer(self.rename, item))
-            menu.addAction("属性/权限").triggered.connect(self._defer(self.change_permissions, item))
+            menu.addAction("✏️ 重命名").triggered.connect(self._defer(self.rename, item))
+            menu.addAction("⚙️ 属性/权限").triggered.connect(self._defer(self.change_permissions, item))
         elif len(selected) > 1:
-            menu.addAction("批量重命名").triggered.connect(self._defer(self._batch_rename))
+            menu.addAction("✏️ 批量重命名").triggered.connect(self._defer(self._batch_rename))
 
         menu.exec(self.mapToGlobal(pos))
 
@@ -297,8 +300,8 @@ class RemoteFileWidget(RemoteDragDropMixin, BaseRemoteTreeWidget):
                 new_path = f"{parent_dir}/{rename_map[old_name]}"
                 try:
                     self.info.rename(path, rename_map[old_name])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Batch rename failed for {old_name}: {e}")
         self.refresh()
 
 

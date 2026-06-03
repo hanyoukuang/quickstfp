@@ -30,7 +30,7 @@ class MainWindow(QMainWindow):
 
         # 2. 顶部工具栏 (随时唤出站点管理器)
         toolbar = self.addToolBar("主控制栏")
-        new_session_action = QAction("新建连接 / 站点管理", self)
+        new_session_action = QAction("🔌 新建连接", self)
         new_session_action.triggered.connect(self.open_site_manager)
         toolbar.addAction(new_session_action)
 
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
         self.site_manager = None
+        self._port_fwd_dialog = None
 
     def _open_port_forward(self):
         current = self.tab_widget.currentWidget()

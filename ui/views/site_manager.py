@@ -1,5 +1,7 @@
 # ui/views/site_manager.py
 import json
+from typing import Optional
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
@@ -56,9 +58,9 @@ class SiteManagerWidget(QWidget):
         self._folders = {}
 
         btn_layout = QHBoxLayout()
-        self.btn_new = QPushButton("新建站点")
-        self.btn_delete = QPushButton("删除站点")
-        self.btn_new_folder = QPushButton("新建分组")
+        self.btn_new = QPushButton("➕ 新建站点")
+        self.btn_delete = QPushButton("🗑️ 删除站点")
+        self.btn_new_folder = QPushButton("📁 新建分组")
         self.btn_new.clicked.connect(self.create_new_site)
         self.btn_delete.clicked.connect(self.delete_site)
         self.btn_new_folder.clicked.connect(self._new_folder)
@@ -67,8 +69,8 @@ class SiteManagerWidget(QWidget):
         btn_layout.addWidget(self.btn_new_folder)
 
         io_layout = QHBoxLayout()
-        self.btn_import = QPushButton("导入")
-        self.btn_export = QPushButton("导出")
+        self.btn_import = QPushButton("📥 导入")
+        self.btn_export = QPushButton("📤 导出")
         self.btn_import.clicked.connect(self.import_sites)
         self.btn_export.clicked.connect(self.export_sites)
         io_layout.addWidget(self.btn_import)
@@ -90,7 +92,7 @@ class SiteManagerWidget(QWidget):
         self.port_edit = QLineEdit("22")
         self.username_edit = QLineEdit()
         self.auth_type_combo = QComboBox()
-        self.auth_type_combo.addItems(["密码登录", "私钥登录"])
+        self.auth_type_combo.addItems(["🔑 密码登录", "🗝️ 私钥登录"])
         self.auth_type_combo.currentIndexChanged.connect(self.on_auth_type_changed)
 
         form_layout.addRow("主机 (Host):", self.host_edit)
@@ -105,8 +107,8 @@ class SiteManagerWidget(QWidget):
 
         action_layout = QHBoxLayout()
         action_layout.addStretch()
-        self.btn_save = QPushButton("保存")
-        self.btn_connect = QPushButton("连接")
+        self.btn_save = QPushButton("💾 保存")
+        self.btn_connect = QPushButton("🔌 连接")
         self.btn_save.clicked.connect(self.save_site)
         self.btn_connect.clicked.connect(self.connect_site)
         action_layout.addWidget(self.btn_save)
@@ -139,7 +141,7 @@ class SiteManagerWidget(QWidget):
         key_hbox = QHBoxLayout()
         key_hbox.addWidget(self.key_path_edit)
         key_hbox.addWidget(self.btn_select_key)
-        self.btn_gen_key = QPushButton("生成密钥")
+        self.btn_gen_key = QPushButton("🔐 生成密钥")
         self.btn_gen_key.clicked.connect(self.generate_key)
         key_hbox.addWidget(self.btn_gen_key)
         self.passphrase_edit = QLineEdit()
@@ -326,7 +328,7 @@ class SiteManagerWidget(QWidget):
                 self.auth_type_combo.setCurrentIndex(1)
 
     @staticmethod
-    def _parse_port(text: str) -> int:
+    def _parse_port(text: str) -> Optional[int]:
         """安全解析端口号，返回整数；无效输入返回 None"""
         text = text.strip()
         if not text:

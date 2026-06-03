@@ -1,4 +1,8 @@
 # ui/views/user_widgets.py
+import logging
+import os
+import datetime
+
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QComboBox, \
     QSplitter, QListWidget, QLabel, QMessageBox
@@ -9,8 +13,8 @@ from ui.views.remote_file_widget import RemoteFileWidget
 from ui.views.transport_widgets import TransferSetupWidget
 from ui.views.snippets_widget import QuickSnippetsWidget
 from ui.views.directory_diff_dialog import DirectoryDiffDialog
-import os
-import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class ControlWidget(QListWidget):
@@ -21,7 +25,7 @@ class ControlWidget(QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
-        self.addItems(["SSH伪终端", "SFTP文件目录", "传输管理"])
+        self.addItems(["💻 SSH 终端", "📂 文件浏览", "📤 传输管理"])
         # 默认选中第一项，使其与 QStackedWidget 默认的 0 索引对齐
         self.setCurrentRow(0)
 
@@ -38,7 +42,7 @@ class UserSFTPWidget(QWidget):
 
         # --- 右侧：原有的远端文件面板 ---
         self.remote_file_widget = RemoteFileWidget(sftp_tab_widget)
-        self.back_button = QPushButton("返回上级")
+        self.back_button = QPushButton("⬆️ 返回上级")
 
         # 将 QLineEdit 改为可编辑的 QComboBox
         self.path_combo = QComboBox()
@@ -54,8 +58,8 @@ class UserSFTPWidget(QWidget):
         self.path_combo.addItem(current_path)
         self.path_combo.setCurrentText(current_path)
 
-        self.get_button = QPushButton("下载选定")
-        self.put_button = QPushButton("高级上传")
+        self.get_button = QPushButton("⬇️ 下载")
+        self.put_button = QPushButton("⬆️ 上传")
 
         self.show_hidden_btn = QPushButton("👁️ 显示隐藏")
         self.show_hidden_btn.setCheckable(True)
@@ -138,8 +142,8 @@ class UserSFTPWidget(QWidget):
                 self.info.chdir(remote_path)
             self.remote_file_widget.refresh()
             self.display_path(self.info.realpath("."))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Sync browse navigate failed: {e}")
 
     def on_search(self):
         keyword = self.search_edit.text().strip()
@@ -215,8 +219,8 @@ class UserSFTPWidget(QWidget):
         try:
             for entry in os.scandir(local_dir):
                 local_files[entry.name] = {"size": entry.stat().st_size}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Local file scan failed for dir diff: {e}")
 
         remote_files = {}
         try:
@@ -229,8 +233,8 @@ class UserSFTPWidget(QWidget):
                     "size": size_item.text() if size_item else "",
                     "time": time_item.text() if time_item else "",
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Remote file read failed for dir diff: {e}")
 
         dialog = DirectoryDiffDialog(self, local_files, remote_files)
         dialog.exec()

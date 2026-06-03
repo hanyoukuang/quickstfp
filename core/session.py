@@ -1,5 +1,6 @@
 # core/session.py
 import asyncio
+import logging
 import shlex
 import threading
 from asyncio import AbstractEventLoop
@@ -8,6 +9,8 @@ from typing import Optional, List
 import asyncssh
 from PySide6.QtCore import QThread, QEventLoop, QTimer
 from asyncssh import SFTPClient, SSHClientProcess, SSHClientConnection
+
+logger = logging.getLogger(__name__)
 
 
 class SSHSFTPInfo(QThread):
@@ -149,8 +152,8 @@ class SSHSFTPInfo(QThread):
             try:
                 self.process.stdin.write(cmd + "\n")
                 await self.process.stdin.drain()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Startup command failed: {cmd} — {e}")
 
     def _run_sync(self, coro):
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
