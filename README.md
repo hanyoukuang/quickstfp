@@ -9,8 +9,8 @@
 需要 Python **3.12+** 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-git clone https://github.com/hanyoukuang/quickstfp.git
-cd quickstfp
+git clone https://github.com/hanyoukuang/quicksftp.git
+cd quicksftp
 uv sync
 ```
 

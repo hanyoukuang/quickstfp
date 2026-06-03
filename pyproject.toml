@@ -19,6 +19,9 @@ dependencies = [
 [project.scripts]
 quickstfp = "quickstfp.main:main"
 
+[project.urls]
+Repository = "https://github.com/hanyoukuang/quicksftp"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
