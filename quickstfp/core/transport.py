@@ -223,7 +223,6 @@ class Transport(QObject):
     def toggle_pause(self):
         """切换暂停状态槽函数"""
 
-        # --- 修改 3：UI 线程触发时，必须将状态的修改抛回给后台事件循环去执行 ---
         def _toggle():
             if self.pause_event:
                 if self.pause_event.is_set():
@@ -256,7 +255,6 @@ class Transport(QObject):
     def start(self):
         """启动传输任务（调度到后台事件循环）"""
 
-        # --- 修改 2：利用包装函数，在后台的 asyncio 循环内部创建并启动事件锁 ---
         async def _wrapper():
             self.pause_event = asyncio.Event()
             self.pause_event.set()  # 默认状态为放行
