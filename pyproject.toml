@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "跨平台 SFTP/SSH 客户端工具，支持多标签页终端、并发文件传输与站点管理"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.12.13"
 dependencies = [
     "asyncssh>=2.21.1",
     "cryptography>=41.0.0",
-    "par-term-emu-core-rust>=0.42",
+    "pyqterminal>=0.1.0",
     "pyside6>=6.11.1",
 ]
 

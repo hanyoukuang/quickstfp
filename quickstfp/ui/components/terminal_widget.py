@@ -15,12 +15,12 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, Signal, Qt, QTimer, QEvent
-from PySide6.QtGui import QKeyEvent, QResizeEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QKeyEvent, QResizeEvent, QAction
+from PySide6.QtWidgets import QApplication, QMenu
 
 from quickstfp.core.session import SSHSFTPInfo
-from quickstfp.ui.terminal.widget import TerminalWidget
-from quickstfp.ui.terminal.input_handler import InputHandler
+from terminal.widget import TerminalWidget
+from terminal.input_handler import InputHandler
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,42 @@ class SSHPtyWidget(TerminalWidget):
         """Trigger bridge startup when the widget becomes visible."""
         super().showEvent(event)
         QTimer.singleShot(0, self._start_bridge)
+
+    # ── Context menu (Chinese + icons, overriding published English menu) ─
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+
+        copy_action = QAction("📋 复制", menu)
+        copy_action.setShortcut("Ctrl+Shift+C")
+        copy_action.triggered.connect(self._copy_selection)
+        copy_action.setEnabled(bool(self._sel_start))
+        menu.addAction(copy_action)
+
+        paste_action = QAction("📋 粘贴", menu)
+        paste_action.setShortcut("Ctrl+Shift+V")
+        paste_action.triggered.connect(self._paste_to_ssh)
+        menu.addAction(paste_action)
+
+        menu.addSeparator()
+
+        zoom_in = QAction("🔍 放大", menu)
+        zoom_in.setShortcut("Ctrl++")
+        zoom_in.triggered.connect(lambda: self._change_font_size(1))
+        menu.addAction(zoom_in)
+
+        zoom_out = QAction("🔎 缩小", menu)
+        zoom_out.setShortcut("Ctrl+-")
+        zoom_out.triggered.connect(lambda: self._change_font_size(-1))
+        menu.addAction(zoom_out)
+
+        zoom_reset = QAction("↩️ 重置缩放", menu)
+        zoom_reset.setShortcut("Ctrl+0")
+        zoom_reset.triggered.connect(lambda: self._change_font_size(
+            13 - self._font.pointSize()))
+        menu.addAction(zoom_reset)
+
+        menu.exec(event.globalPos())
 
     # ── Focus (prevent Tab from triggering Qt focus navigation) ─────────
 
