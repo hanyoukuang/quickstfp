@@ -1,10 +1,10 @@
-"""SSH pseudo-terminal widget using kai-term native PySide6 rendering.
+"""SSH pseudo-terminal widget using pyqterminal native PySide6 rendering.
 
 Replaces the previous QWebEngineView + xterm.js approach with a native
 QPainter-based terminal (Rust-backed VT520 parser).
 
 Architecture:
-    asyncssh stdout → TerminalBridge.run() → output Signal → kai-term feed()
+    asyncssh stdout → TerminalBridge.run() → output Signal → pyqterminal feed()
     Keyboard → InputHandler.encode() → TerminalBridge.on_input() → asyncssh stdin
 """
 
@@ -34,7 +34,7 @@ class TerminalBridge(QObject):
     and emits data via the ``output`` signal. Keyboard input is received
     via the ``on_input`` slot and forwarded to SSH stdin.
 
-    This class is unchanged from the pre-kai-term version — the QWebChannel
+    This class is unchanged from the pre-pyqterminal version — the QWebChannel
     @Slot decorators are harmless in a pure-Qt context.
     """
 
@@ -122,10 +122,10 @@ class TerminalBridge(QObject):
 
 
 class SSHPtyWidget(TerminalWidget):
-    """SSH pseudo-terminal view — extends kai-term TerminalWidget.
+    """SSH pseudo-terminal view — extends pyqterminal TerminalWidget.
 
     Replaces the previous QWebEngineView-based SSHPtyWidget.  Uses
-    ``display_only=True`` because the asyncssh PTY (not kai-term's
+    ``display_only=True`` because the asyncssh PTY (not pyqterminal's
     PtyTerminal) manages the actual shell.  Keyboard input is captured
     via an overridden ``keyPressEvent`` and forwarded to asyncssh via
     the ``TerminalBridge``.

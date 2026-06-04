@@ -12,7 +12,7 @@ requires-python = ">=3.12.13"
 dependencies = [
     "asyncssh>=2.21.1",
     "cryptography>=41.0.0",
-    "pyqterminal>=0.1.0",
+    "pyqterminal>=0.1.1",
     "pyside6>=6.11.1",
 ]
 

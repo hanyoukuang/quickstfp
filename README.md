@@ -1,8 +1,8 @@
-# quickstfp
+# quicksftp
 
 跨平台 SFTP/SSH 客户端工具。支持多标签页终端、并发文件传输与站点管理。
 
-终端渲染基于 [kai-term](https://github.com/hanyoukuang/kai-term)，使用原生 QPainter + Rust VT520 解析器（[par-term-emu-core-rust](https://github.com/paulrobello/par-term-emu-core-rust)），无 Web 依赖。
+终端渲染基于 [pyqterminal](https://pypi.org/project/pyqterminal/)，使用原生 QPainter + Rust VT520 解析器（[par-term-emu-core-rust](https://github.com/paulrobello/par-term-emu-core-rust)），无 Web 依赖。
 
 ## 安装
 
