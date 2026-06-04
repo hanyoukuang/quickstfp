@@ -276,15 +276,15 @@ wheels = [
 
 [[package]]
 name = "pyqterminal"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "par-term-emu-core-rust" },
     { name = "pyside6" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/0a/694c5a898f6f56213271e13a95cb71ec7fdd50a0431b5aa4b53a7e1375a1/pyqterminal-0.1.1.tar.gz", hash = "sha256:e473e655e8ee0e581f064d71e3480b5a2826bd0c37ba3fe01bb6d5026cf18aa8", size = 9974, upload-time = "2026-06-04T05:32:44.101Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/ae/a4e77ad81da65b43d47c167817c97a5f5cd3e14202661782ff7c5c241442/pyqterminal-0.1.2.tar.gz", hash = "sha256:af3621b3cf7178673363b15ff70114d6342b671f4e1014ff4b7c01ebcc182ea4", size = 11954, upload-time = "2026-06-04T08:02:02.762Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/d7/a1d88913a68b29af0c8e9e3a1086348ab35f06e1bd7dd94ba20b98519813/pyqterminal-0.1.1-py3-none-any.whl", hash = "sha256:034afe92acd1200397af870b57d897e71b5b5997728c57983b30dd9a0fdd07ff", size = 10638, upload-time = "2026-06-04T05:32:42.914Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/b1/7d421568a8be6dd791fbb5bd2d9c781feb0142cf95e056557b98dea44796/pyqterminal-0.1.2-py3-none-any.whl", hash = "sha256:f6d53f374e1d2da6c234fb8dd3ca4951c87c55a822d5aeb6fefb89b86801eafd", size = 13329, upload-time = "2026-06-04T08:02:01.679Z" },
 ]
 
 [[package]]
@@ -413,7 +413,7 @@ dev = [
 requires-dist = [
     { name = "asyncssh", specifier = ">=2.21.1" },
     { name = "cryptography", specifier = ">=41.0.0" },
-    { name = "pyqterminal", specifier = ">=0.1.1" },
+    { name = "pyqterminal", specifier = ">=0.1.2" },
     { name = "pyside6", specifier = ">=6.11.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
